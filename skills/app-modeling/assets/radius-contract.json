@@ -1,0 +1,1905 @@
+{
+  "azureRecipeMappings": {
+    "Radius.AI/models": {
+      "outputs": {
+        "endpoint": "endpoint",
+        "secrets": {
+          "apiKey": "primaryKey"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/cognitive-services/account:0.15.0"
+    },
+    "Radius.AI/search": {
+      "outputs": {
+        "endpoint": "endpoint",
+        "secrets": {
+          "apiKey": "primaryKey"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/search/search-service:0.12.2"
+    },
+    "Radius.Data/mongoDatabases": {
+      "outputs": {
+        "endpoint": "endpoint",
+        "secrets": {
+          "connectionString": "primaryReadWriteConnectionString"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/document-db/database-account:0.19.0"
+    },
+    "Radius.Data/mySqlDatabases": {
+      "outputs": {
+        "host": "fqdn"
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.10.3"
+    },
+    "Radius.Data/postgreSqlDatabases": {
+      "outputs": {
+        "host": "fqdn"
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2"
+    },
+    "Radius.Data/redisCaches": {
+      "outputs": {
+        "host": "hostName",
+        "port": "port",
+        "secrets": {
+          "url": "primaryConnectionString"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise:0.5.1"
+    },
+    "Radius.Data/sqlServerDatabases": {
+      "outputs": {
+        "host": "fullyQualifiedDomainName"
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4"
+    },
+    "Radius.Messaging/kafka": {
+      "outputs": {
+        "host": "name",
+        "secrets": {
+          "connectionString": "primaryConnectionString"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/event-hub/namespace:0.14.2"
+    },
+    "Radius.Messaging/rabbitMQ": {
+      "outputs": {
+        "host": "name",
+        "secrets": {
+          "connectionString": "primaryConnectionString"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/service-bus/namespace:0.16.2"
+    },
+    "Radius.Storage/objectStorage": {
+      "outputs": {
+        "accountName": "name",
+        "endpoint": "primaryBlobEndpoint",
+        "secrets": {
+          "accountKey": "primaryAccessKey",
+          "connectionString": "primaryConnectionString"
+        }
+      },
+      "providerGlobalName": true,
+      "resourceNameParameter": "{{context.resource.name}}",
+      "source": "mcr.microsoft.com/bicep/avm/res/storage/storage-account:0.32.1"
+    }
+  },
+  "extension": {
+    "compatibilityProof": {
+      "extensionOnlyProperties": {
+        "Radius.AI/models@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.AI/search@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Compute/containerImages@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Compute/containers@2025-08-01-preview": [
+          "codeReference"
+        ],
+        "Radius.Compute/persistentVolumes@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Compute/routes@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Data/mongoDatabases@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Data/mySqlDatabases@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Data/postgreSqlDatabases@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Data/redisCaches@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Data/sqlServerDatabases@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Messaging/kafka@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Messaging/rabbitMQ@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Security/secrets@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ],
+        "Radius.Storage/objectStorage@2025-08-01-preview": [
+          "codeReference",
+          "connections"
+        ]
+      },
+      "proofDirectory": "harness/probes/oci-0.60-compile",
+      "sourceSchemaSubset": true,
+      "tenGoldenCompilesWithZeroDiagnostics": true
+    },
+    "layerDigest": "sha256:7e1f7abf501b9ce8b05d44cda64289cb426f73641c09414aecdda102af9f9685",
+    "localValidationBundleSha256": "sha256:0240a0f4039ea7b8819ac157ddf9808bbf80503692caaf7e2fba0dbea18b9347",
+    "manifestDigest": "sha256:f7be953aef4cd53dc68709cb60cbb413bef5d3a4beb7058abc0ba6a820b69506",
+    "reference": "br:biceptypes.azurecr.io/radius:0.60.0-rc1",
+    "typesTgzSha256": "sha256:7e1f7abf501b9ce8b05d44cda64289cb426f73641c09414aecdda102af9f9685"
+  },
+  "generatedFrom": {
+    "manifestSha256": {
+      "refs/resource-types-contrib/AI/models/models.yaml": "4bde9a93c6256e1958851c644e89dc80528f86caf07193e80a71ccd224e3ecd1",
+      "refs/resource-types-contrib/AI/search/search.yaml": "fc6caa69668045bfb01cc15aa9b5da3379c29750f8caece3c9b6322c2cb44fef",
+      "refs/resource-types-contrib/Compute/containerImages/containerImages.yaml": "432ac84642bc07c1faef5428a6e217809c273b3272a62c1e1a22c5a7e8e698d0",
+      "refs/resource-types-contrib/Compute/containers/containers.yaml": "39b0ed6754cd979372b15ee2d8e9d2d8367ea458cbde9ba01e0705ef74101e75",
+      "refs/resource-types-contrib/Compute/persistentVolumes/persistentVolumes.yaml": "791706f86b4e0c94fc818fa7b6e9d992a96e441aa6a5452ab71906a8684dc0dc",
+      "refs/resource-types-contrib/Compute/routes/routes.yaml": "7e13467fca66a895a338fbed35c9cdf3b13ce8ee2df78a51c162f4464f94d9cf",
+      "refs/resource-types-contrib/Data/mongoDatabases/mongoDatabases.yaml": "92514e3007efd4ac409b8705255d1f9ea7b1a5e9d62d23fd32f97f08eb4711bc",
+      "refs/resource-types-contrib/Data/mySqlDatabases/mySqlDatabases.yaml": "5c73828589307ee872c7f333611c9546614ed854d5f3e372942ae8fdd265e6d0",
+      "refs/resource-types-contrib/Data/postgreSqlDatabases/postgreSqlDatabases.yaml": "c8fffab5e16c6165ed41553107bb046e92f85a8bb29f114cf7b85a4c61865de7",
+      "refs/resource-types-contrib/Data/redisCaches/redisCaches.yaml": "cbbaad1a8788d97b1892969736dcd1414cf58c2d4ffe93ba591f2b155baf7cdb",
+      "refs/resource-types-contrib/Data/sqlServerDatabases/sqlServerDatabases.yaml": "d1bc2128dec6b09ef18536d186642f01f589771c49b6d473fd2630cd53e47bce",
+      "refs/resource-types-contrib/Messaging/kafka/kafka.yaml": "18f1fd29a6eeba15faf0f83f5464b12c44d8ef20e03bce16f026a6d8e0351321",
+      "refs/resource-types-contrib/Messaging/rabbitMQ/rabbitMQ.yaml": "0b92aed9ba3f0ac2b9bc546bdb51339aa3b37a4de41c93b339fa05d00eef106f",
+      "refs/resource-types-contrib/Security/secrets/secrets.yaml": "33fb5856d143e0912d3ece761ca43df3040604b969eab0680681788958e0e293",
+      "refs/resource-types-contrib/Storage/objectStorage/objectStorage.yaml": "7570402e7a33ae017725ee2ae248682ce3df337d05152086339b98740fbab074"
+    },
+    "radiusCommit": "095dad2a093bbaea5389b5787afdb8e042c2e31e",
+    "recipePack": "refs/resource-types-contrib/recipepack/azure/aks-recipepack.bicep",
+    "recipePackSha256": "7431677b252f49adf2e274ff010fe8dfef0a1a22305856f2e410e6f32ff66a37",
+    "resourceTypesContribCommit": "047932953480a3ceb1fa508a98126362f08a30c6"
+  },
+  "policies": {
+    "allBicepDiagnosticsFailValidation": true,
+    "connectionsDoNotReplaceNativeClientConfig": true,
+    "defaultExposure": "none",
+    "managedSecretsUseSecretKeyRef": true,
+    "providerConnectionStringsRequireClientGrammarProof": true,
+    "providerGlobalNamesUseRequiredParameters": true,
+    "schemaEscapeFunctionsForbidden": [
+      "any"
+    ],
+    "sourceAndImageRefsMustBeImmutable": true
+  },
+  "protocolProfiles": {
+    "Radius.AI/models": {
+      "binding": {
+        "apiKeySecret": "apiKey",
+        "endpointProperty": "endpoint"
+      },
+      "clientKind": "azure-openai",
+      "requiredClientSettings": [
+        "endpoint",
+        "apiKey",
+        "apiVersion",
+        "deploymentOrModel"
+      ]
+    },
+    "Radius.AI/search": {
+      "binding": {
+        "apiKeySecret": "apiKey",
+        "endpointProperty": "endpoint"
+      },
+      "clientKind": "azure-ai-search",
+      "requiredClientSettings": [
+        "endpoint",
+        "apiKey",
+        "indexName"
+      ]
+    },
+    "Radius.Data/mongoDatabases": {
+      "binding": {
+        "endpointProperty": "endpoint",
+        "uriSecret": "connectionString"
+      },
+      "clientKind": "mongodb",
+      "requiredClientSettings": [
+        "connectionUri",
+        "tls=true",
+        "certificateValidation=true",
+        "authMode=connectionString"
+      ],
+      "runtimeRequiredClientSettings": [
+        "tls",
+        "certificateValidation"
+      ]
+    },
+    "Radius.Data/mySqlDatabases": {
+      "binding": {
+        "databaseInput": "database",
+        "hostProperty": "host",
+        "passwordInput": "password",
+        "portLiteral": 3306,
+        "usernameInput": "username"
+      },
+      "clientKind": "mysql",
+      "requiredClientSettings": [
+        "host",
+        "port",
+        "database",
+        "username",
+        "password"
+      ]
+    },
+    "Radius.Data/postgreSqlDatabases": {
+      "binding": {
+        "databaseInput": "database",
+        "hostProperty": "host",
+        "passwordInput": "password",
+        "portLiteral": 5432,
+        "usernameInput": "username"
+      },
+      "clientKind": "postgresql",
+      "requiredClientSettings": [
+        "host",
+        "port",
+        "database",
+        "username",
+        "password",
+        "sslmode=require"
+      ]
+    },
+    "Radius.Data/redisCaches": {
+      "binding": {
+        "uriSecret": "url"
+      },
+      "clientKind": "redis",
+      "tls": "Preserve the scheme and TLS options carried by the recipe URL."
+    },
+    "Radius.Data/sqlServerDatabases": {
+      "binding": {
+        "databaseInput": "database",
+        "hostProperty": "host",
+        "passwordInput": "password",
+        "portLiteral": 1433,
+        "usernameInput": "username"
+      },
+      "clientKind": "sqlserver",
+      "requiredClientSettings": [
+        "host",
+        "port",
+        "database",
+        "username",
+        "password",
+        "encrypt=true",
+        "trustServerCertificate=false"
+      ]
+    },
+    "Radius.Messaging/kafka": {
+      "binding": {
+        "bootstrapTransform": "<host>.servicebus.windows.net:9093",
+        "connectionStringSecret": "connectionString",
+        "topicInput": "topic"
+      },
+      "clientKind": "kafka-event-hubs",
+      "requiredClientSettings": [
+        "security.protocol=SASL_SSL",
+        "sasl.mechanism=PLAIN",
+        "jaas.username=$ConnectionString",
+        "jaas.password=managedSecret:connectionString"
+      ]
+    },
+    "Radius.Messaging/rabbitMQ": {
+      "binding": {
+        "connectionStringSecret": "connectionString",
+        "entityInput": "queue",
+        "hostTransform": "amqps://<host>.servicebus.windows.net",
+        "port": 5671
+      },
+      "clientKind": "amqp-1.0-service-bus",
+      "requiredClientSettings": [
+        "protocol=amqp_1",
+        "tls=true",
+        "sasl.mechanism=plain",
+        "sasl.user=RootManageSharedAccessKey",
+        "sasl.password=managedSecret:connectionString"
+      ],
+      "requiredAnyClientSettings": [
+        [
+          "target_address",
+          "source_address"
+        ]
+      ],
+      "requiredTransforms": {
+        "sasl.password": "SharedAccessKey="
+      }
+    },
+    "Radius.Storage/objectStorage": {
+      "binding": {
+        "accountKeySecret": "accountKey",
+        "accountNameProperty": "accountName",
+        "connectionStringSecret": "connectionString",
+        "containerInput": "containerName",
+        "endpointProperty": "endpoint"
+      },
+      "clientKind": "azure-blob",
+      "requiredClientSettings": [
+        "container",
+        "accountName",
+        "accountKeyOrConnectionString"
+      ]
+    }
+  },
+  "resourceTypes": {
+    "Radius.AI/models@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.AI/models",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "endpoint": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "model": {
+            "default": "gpt-5-mini",
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "apiKey": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.AI/search@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.AI/search",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "endpoint": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "apiKey": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Compute/containerImages@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Compute/containerImages",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "build": {
+            "properties": {
+              "args": {
+                "properties": {},
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              },
+              "dockerfile": {
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "platforms": {
+                "items": {
+                  "readOnly": false,
+                  "required": true,
+                  "sensitive": false,
+                  "type": "string"
+                },
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "array"
+              },
+              "source": {
+                "readOnly": false,
+                "required": true,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "object"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "imageReference": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "tag": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Compute/containers@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Compute/containers",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "autoScaling": {
+            "properties": {
+              "maxReplicas": {
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "integer"
+              },
+              "metrics": {
+                "items": {
+                  "properties": {
+                    "customMetric": {
+                      "readOnly": false,
+                      "required": false,
+                      "sensitive": false,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "cpu",
+                        "memory",
+                        "custom"
+                      ],
+                      "readOnly": false,
+                      "required": true,
+                      "sensitive": false,
+                      "type": "string"
+                    },
+                    "target": {
+                      "properties": {
+                        "averageUtilization": {
+                          "readOnly": false,
+                          "required": false,
+                          "sensitive": false,
+                          "type": "integer"
+                        },
+                        "averageValue": {
+                          "readOnly": false,
+                          "required": false,
+                          "sensitive": false,
+                          "type": "integer"
+                        },
+                        "value": {
+                          "readOnly": false,
+                          "required": false,
+                          "sensitive": false,
+                          "type": "integer"
+                        }
+                      },
+                      "readOnly": false,
+                      "required": true,
+                      "sensitive": false,
+                      "type": "object"
+                    }
+                  },
+                  "readOnly": false,
+                  "required": true,
+                  "sensitive": false,
+                  "type": "object"
+                },
+                "readOnly": false,
+                "required": true,
+                "sensitive": false,
+                "type": "array"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "connections": {
+            "properties": {},
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "containers": {
+            "properties": {},
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "object"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "extensions": {
+            "properties": {
+              "daprSidecar": {
+                "properties": {
+                  "appId": {
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "string"
+                  },
+                  "appPort": {
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "integer"
+                  },
+                  "config": {
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "string"
+                  }
+                },
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "platformOptions": {
+            "properties": {},
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "replicas": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "integer"
+          },
+          "restartPolicy": {
+            "enum": [
+              "Always",
+              "OnFailure",
+              "Never"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "volumes": {
+            "properties": {},
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Compute/persistentVolumes@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Compute/persistentVolumes",
+      "schema": {
+        "properties": {
+          "allowedAccessModes": {
+            "enum": [
+              "ReadWriteOnce",
+              "ReadOnlyMany",
+              "ReadWriteMany"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "sizeInGib": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Compute/routes@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Compute/routes",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "hostnames": {
+            "items": {
+              "readOnly": false,
+              "required": true,
+              "sensitive": false,
+              "type": "string"
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "HTTP",
+              "TCP",
+              "TLS",
+              "UDP"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "listener": {
+            "properties": {
+              "hostname": {
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "port": {
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "integer"
+              },
+              "protocol": {
+                "enum": [
+                  "HTTP",
+                  "HTTPS",
+                  "TLS",
+                  "TCP",
+                  "UDP"
+                ],
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "rules": {
+            "items": {
+              "properties": {
+                "destinationContainer": {
+                  "properties": {
+                    "containerName": {
+                      "readOnly": false,
+                      "required": true,
+                      "sensitive": false,
+                      "type": "string"
+                    },
+                    "containerPort": {
+                      "readOnly": false,
+                      "required": true,
+                      "sensitive": false,
+                      "type": "integer"
+                    },
+                    "resourceId": {
+                      "readOnly": false,
+                      "required": true,
+                      "sensitive": false,
+                      "type": "string"
+                    }
+                  },
+                  "readOnly": false,
+                  "required": true,
+                  "sensitive": false,
+                  "type": "object"
+                },
+                "matches": {
+                  "items": {
+                    "properties": {
+                      "httpHeaders": {
+                        "items": {
+                          "properties": {
+                            "name": {
+                              "readOnly": false,
+                              "required": true,
+                              "sensitive": false,
+                              "type": "string"
+                            },
+                            "value": {
+                              "readOnly": false,
+                              "required": true,
+                              "sensitive": false,
+                              "type": "string"
+                            }
+                          },
+                          "readOnly": false,
+                          "required": true,
+                          "sensitive": false,
+                          "type": "object"
+                        },
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      },
+                      "httpMethod": {
+                        "enum": [
+                          "GET",
+                          "HEAD",
+                          "POST",
+                          "PUT",
+                          "DELETE",
+                          "CONNECT",
+                          "OPTIONS",
+                          "TRACE",
+                          "PATCH"
+                        ],
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "string"
+                      },
+                      "httpPath": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "string"
+                      },
+                      "httpQueryParams": {
+                        "items": {
+                          "properties": {
+                            "name": {
+                              "readOnly": false,
+                              "required": true,
+                              "sensitive": false,
+                              "type": "string"
+                            },
+                            "value": {
+                              "readOnly": false,
+                              "required": true,
+                              "sensitive": false,
+                              "type": "string"
+                            }
+                          },
+                          "readOnly": false,
+                          "required": true,
+                          "sensitive": false,
+                          "type": "object"
+                        },
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      }
+                    },
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "object"
+                  },
+                  "readOnly": false,
+                  "required": true,
+                  "sensitive": false,
+                  "type": "array"
+                }
+              },
+              "readOnly": false,
+              "required": true,
+              "sensitive": false,
+              "type": "object"
+            },
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Core/applications@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Core/applications",
+      "schema": {
+        "properties": {
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "provisioningState": {
+            "enum": [
+              "Creating",
+              "Updating",
+              "Deleting",
+              "Accepted",
+              "Provisioning",
+              "Succeeded",
+              "Failed",
+              "Canceled"
+            ],
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "status": {
+            "properties": {
+              "compute": {
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "DiscriminatedObjectType"
+              },
+              "outputResources": {
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "array"
+              },
+              "recipe": {
+                "properties": {
+                  "templateKind": {
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "string"
+                  },
+                  "templatePath": {
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "string"
+                  },
+                  "templateVersion": {
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "string"
+                  }
+                },
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              }
+            },
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Core/bicepSettings@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Core/bicepSettings",
+      "schema": {
+        "properties": {
+          "provisioningState": {
+            "enum": [
+              "Creating",
+              "Updating",
+              "Deleting",
+              "Accepted",
+              "Provisioning",
+              "Succeeded",
+              "Failed",
+              "Canceled"
+            ],
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "referencedBy": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "array"
+          },
+          "registryAuthentications": {
+            "properties": {},
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Core/environments@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Core/environments",
+      "schema": {
+        "properties": {
+          "bicepSettings": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "providers": {
+            "properties": {
+              "aws": {
+                "properties": {
+                  "accountId": {
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "string"
+                  },
+                  "region": {
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "string"
+                  }
+                },
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              },
+              "azure": {
+                "properties": {
+                  "identity": {
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "undefined",
+                          "azure.com.workload",
+                          "userAssigned",
+                          "systemAssigned",
+                          "systemAssignedUserAssigned"
+                        ],
+                        "readOnly": false,
+                        "required": true,
+                        "sensitive": false,
+                        "type": "string"
+                      },
+                      "managedIdentity": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      },
+                      "oidcIssuer": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "string"
+                      },
+                      "resource": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "string"
+                      }
+                    },
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "object"
+                  },
+                  "resourceGroupName": {
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "string"
+                  },
+                  "subscriptionId": {
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "string"
+                  }
+                },
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              },
+              "kubernetes": {
+                "properties": {
+                  "namespace": {
+                    "readOnly": false,
+                    "required": true,
+                    "sensitive": false,
+                    "type": "string"
+                  }
+                },
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "provisioningState": {
+            "enum": [
+              "Creating",
+              "Updating",
+              "Deleting",
+              "Accepted",
+              "Provisioning",
+              "Succeeded",
+              "Failed",
+              "Canceled"
+            ],
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "recipePacks": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "array"
+          },
+          "recipeParameters": {
+            "properties": {},
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "simulated": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "boolean"
+          },
+          "terraformSettings": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Core/recipePacks@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Core/recipePacks",
+      "schema": {
+        "properties": {
+          "provisioningState": {
+            "enum": [
+              "Creating",
+              "Updating",
+              "Deleting",
+              "Accepted",
+              "Provisioning",
+              "Succeeded",
+              "Failed",
+              "Canceled"
+            ],
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "recipes": {
+            "properties": {},
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "object"
+          },
+          "referencedBy": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Core/terraformSettings@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Core/terraformSettings",
+      "schema": {
+        "properties": {
+          "env": {
+            "properties": {},
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "provisioningState": {
+            "enum": [
+              "Creating",
+              "Updating",
+              "Deleting",
+              "Accepted",
+              "Provisioning",
+              "Succeeded",
+              "Failed",
+              "Canceled"
+            ],
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "referencedBy": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "array"
+          },
+          "terraformrc": {
+            "properties": {
+              "credentials": {
+                "properties": {},
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              },
+              "providerInstallation": {
+                "properties": {
+                  "direct": {
+                    "properties": {
+                      "exclude": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      },
+                      "include": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      }
+                    },
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "object"
+                  },
+                  "networkMirror": {
+                    "properties": {
+                      "exclude": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      },
+                      "include": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "array"
+                      },
+                      "url": {
+                        "readOnly": false,
+                        "required": false,
+                        "sensitive": false,
+                        "type": "string"
+                      }
+                    },
+                    "readOnly": false,
+                    "required": false,
+                    "sensitive": false,
+                    "type": "object"
+                  }
+                },
+                "readOnly": false,
+                "required": false,
+                "sensitive": false,
+                "type": "object"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Data/mongoDatabases@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Data/mongoDatabases",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "database": {
+            "default": "mongo_db",
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "endpoint": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "connectionString": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Data/mySqlDatabases@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Data/mySqlDatabases",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "database": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "host": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "password": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": true,
+            "type": "string"
+          },
+          "port": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "integer"
+          },
+          "username": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "version": {
+            "enum": [
+              "5.7",
+              "8.0",
+              "8.4"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Data/postgreSqlDatabases@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Data/postgreSqlDatabases",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "database": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "host": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "initSql": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "password": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": true,
+            "type": "string"
+          },
+          "port": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "username": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Data/redisCaches@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Data/redisCaches",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "host": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "port": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "integer"
+          },
+          "secrets": {
+            "properties": {
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "url": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "size": {
+            "enum": [
+              "S",
+              "M",
+              "L"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Data/sqlServerDatabases@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Data/sqlServerDatabases",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "database": {
+            "default": "appdb",
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "host": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "password": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": true,
+            "type": "string"
+          },
+          "port": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "username": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Messaging/kafka@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Messaging/kafka",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "host": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "connectionString": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          },
+          "topic": {
+            "default": "events",
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Messaging/rabbitMQ@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Messaging/rabbitMQ",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "host": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "queue": {
+            "default": "jobs",
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "connectionString": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Security/secrets@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Security/secrets",
+      "schema": {
+        "properties": {
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "data": {
+            "properties": {},
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "object"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "generic",
+              "certificate-pem",
+              "certificate-pkcs12",
+              "basicAuthentication",
+              "awsIRSA",
+              "azureWorkloadIdentity"
+            ],
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "Radius.Storage/objectStorage@2025-08-01-preview": {
+      "apiVersion": "2025-08-01-preview",
+      "qualifiedType": "Radius.Storage/objectStorage",
+      "schema": {
+        "properties": {
+          "accountName": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "application": {
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "containerName": {
+            "default": "data",
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "endpoint": {
+            "readOnly": true,
+            "required": false,
+            "sensitive": false,
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": false,
+            "required": true,
+            "sensitive": false,
+            "type": "string"
+          },
+          "secrets": {
+            "properties": {
+              "accountKey": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "connectionString": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              },
+              "name": {
+                "readOnly": true,
+                "required": false,
+                "sensitive": false,
+                "type": "string"
+              }
+            },
+            "readOnly": false,
+            "required": false,
+            "sensitive": false,
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  "schemaVersion": 1,
+  "toolchain": {
+    "bicepCli": "0.42.1",
+    "radiusCli": "0.59.0",
+    "radiusCliCommit": "2bf2c25fcdde20d4cba1371618829bbbe1f9a997"
+  }
+}

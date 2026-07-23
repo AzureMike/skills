@@ -1,0 +1,651 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://radius-project.github.io/skills/app-modeling/plan.schema.json",
+  "title": "Radius application modeling plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "source",
+    "profile",
+    "reviewedEvidence",
+    "parameters",
+    "resources",
+    "workloads",
+    "connections",
+    "ambiguities",
+    "unsupported"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryUrl",
+        "commit",
+        "subdirectory",
+        "factsDigest"
+      ],
+      "properties": {
+        "repositoryUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "subdirectory": {
+          "type": "string"
+        },
+        "factsDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "provider",
+        "exposure",
+        "evidence"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "enum": [
+            "azure",
+            "kubernetes",
+            "portable"
+          ]
+        },
+        "exposure": {
+          "enum": [
+            "none",
+            "internal",
+            "external"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "reviewedEvidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidenceId",
+          "disposition",
+          "rationale"
+        ],
+        "properties": {
+          "evidenceId": {
+            "$ref": "#/$defs/evidenceId"
+          },
+          "disposition": {
+            "enum": [
+              "included",
+              "excluded",
+              "defaulted"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/parameter"
+      }
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resource"
+      }
+    },
+    "workloads": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/workload"
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/connection"
+      }
+    },
+    "ambiguities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ambiguity"
+      }
+    },
+    "unsupported": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unsupported"
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^[EI][0-9]+$"
+    },
+    "evidenceIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidenceId"
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "secure",
+        "purpose",
+        "evidence"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "int",
+            "bool",
+            "object",
+            "array"
+          ]
+        },
+        "secure": {
+          "type": "boolean"
+        },
+        "default": true,
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "evidence"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "literal",
+            "parameter",
+            "secureParameter",
+            "resourceProperty",
+            "managedSecret",
+            "runtimeExpansion"
+          ]
+        },
+        "value": true,
+        "parameter": {
+          "$ref": "#/$defs/identifier"
+        },
+        "resource": {
+          "$ref": "#/$defs/identifier"
+        },
+        "property": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "apiVersion",
+        "name",
+        "properties",
+        "outputsUsed",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^Radius\\.[A-Za-z0-9]+/[A-Za-z0-9]+$"
+        },
+        "apiVersion": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:-preview)?$"
+        },
+        "name": {
+          "$ref": "#/$defs/binding"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/binding"
+          }
+        },
+        "outputsUsed": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "evidence"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "build",
+            "published"
+          ]
+        },
+        "repositoryUrl": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "dockerfile": {
+          "type": "string"
+        },
+        "platforms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^linux/(?:amd64|arm64)$"
+          }
+        },
+        "image": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "environmentBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "binding",
+        "evidence"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "settingConsumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target",
+        "inputs",
+        "evidence"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "environment",
+            "source",
+            "startupEnvironment",
+            "generatedFile",
+            "processStdin"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "connectionSetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "consumer",
+        "evidence"
+      ],
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "consumer": {
+          "$ref": "#/$defs/settingConsumer"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "generatedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "mode",
+        "lifetime",
+        "cleanup",
+        "contentTemplate",
+        "evidence"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "mode": {
+          "const": "0600"
+        },
+        "lifetime": {
+          "enum": [
+            "one-shot",
+            "process"
+          ]
+        },
+        "cleanup": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentTemplate": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "image",
+        "command",
+        "args",
+        "ports",
+        "environment",
+        "generatedFiles",
+        "exposure",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "containerPort",
+              "protocol",
+              "evidence"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/identifier"
+              },
+              "containerPort": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "protocol": {
+                "enum": [
+                  "TCP",
+                  "UDP"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/$defs/evidenceIds"
+              }
+            }
+          }
+        },
+        "environment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/environmentBinding"
+          }
+        },
+        "generatedFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/generatedFile"
+          }
+        },
+        "exposure": {
+          "enum": [
+            "none",
+            "internal",
+            "external"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "sourceResource",
+        "targetWorkload",
+        "disableDefaultEnvVars",
+        "clientProfile",
+        "settings",
+        "evidence"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sourceResource": {
+          "$ref": "#/$defs/identifier"
+        },
+        "targetWorkload": {
+          "$ref": "#/$defs/identifier"
+        },
+        "disableDefaultEnvVars": {
+          "type": "boolean"
+        },
+        "clientProfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/connectionSetting"
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "ambiguity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "question",
+        "candidates",
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "enum": [
+            "open",
+            "resolved"
+          ]
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    },
+    "unsupported": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "capability": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceIds"
+        }
+      }
+    }
+  }
+}
