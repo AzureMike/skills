@@ -62,8 +62,17 @@ with a local fallback database solely because its selector is unset in the
 image. A user-facing HTTP workload requires a route unless source proves it is
 internal-only.
 
-Stay bounded: use at most four batched source inspections. Do not build the
-application, browse the network, or search outside the repository.
+Prove one usable primary feature path for every workload. A UI, worker,
+producer, consumer, or API that exists to operate on a database, broker,
+storage service, or model is not runnable merely because its process starts:
+model at least one supported dependency instance and every required native
+setting. Source fact closure is invalid if removing a declared dependency makes
+the application's primary feature useless.
+
+Inspect source in this order: Dockerfile and README; canonical deployment
+manifests; configuration binding and client construction; then release metadata
+only when packaging requires it. Stay bounded to four batched inspections. Do
+not build the application, browse the network, or search outside the repository.
 
 ### 2. Resolve Radius contracts
 
@@ -99,8 +108,8 @@ Write a fresh `.radius/app.bicep` and `.radius/bicepconfig.json`.
   bind every resource to `environment` and the application ID.
 - Build usable application Dockerfiles from the immutable checked-out source.
   If a Dockerfile requires an absent generated artifact, use only a verified
-  exact first-party release image for the same revision. A release tag is
-  acceptable; never invent a digest.
+  exact first-party release image and exact Git tag for the same revision. A
+  release tag is acceptable; never invent a digest or short-commit image tag.
 - Configure every dependency through exact source-native settings plus a Radius
   connection with generic projection disabled when the source does not consume
   it.
