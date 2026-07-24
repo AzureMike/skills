@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from typing import Any
 import uuid
@@ -166,10 +165,31 @@ def build_authoring_contract(evidence: dict[str, Any]) -> dict[str, Any]:
         "requirementsRules": {
             "settingName": "exact text before '=' in each required profile setting",
             "runtimeConfig": (
-                "literal rendered in container command, args, or native config"
+                "literal rendered in container env, command, args, or native config"
             ),
             "secretKeyRef": "secret environment input",
             "sourceDefault": "only an unmodified source default",
+        },
+        "secretPolicy": {
+            "developerSupplied": {
+                "input": "@secure() parameter",
+                "containerStorage": "Radius.Security/secrets.data",
+                "containerBinding": "valueFrom.secretKeyRef",
+                "reuse": (
+                    "The same secure parameter may also bind a backing resource's "
+                    "sensitive input."
+                ),
+            },
+            "recipeGenerated": {
+                "containerBinding": "valueFrom.secretKeyRef",
+                "secretName": "<resource>.properties.secrets.name",
+                "key": "exact Radius key from the verified Recipe output",
+            },
+            "forbidden": [
+                "secret-like container env.value",
+                "Bicep interpolation of credentials",
+                "copying a Recipe-generated secret into an authored secret",
+            ],
         },
         "bundles": bundles,
     }
@@ -349,14 +369,36 @@ def reconcile_requirements(
                 )
     if changes:
         write_json(requirements_path, requirements)
-    return {"changes": changes}
+
+    config_changes = []
+    config_path = candidate / "bicepconfig.json"
+    try:
+        config = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        config = None
+    if isinstance(config, dict):
+        experimental = config.setdefault("experimentalFeaturesEnabled", {})
+        if isinstance(experimental, dict) and experimental.get("extensibility") is not True:
+            experimental["extensibility"] = True
+            config_changes.append("experimentalFeaturesEnabled.extensibility")
+        extensions = config.setdefault("extensions", {})
+        extension_ref = authoring_contract["extension"]["reference"]
+        if isinstance(extensions, dict) and extensions.get("radius") != extension_ref:
+            extensions["radius"] = extension_ref
+            config_changes.append("extensions.radius")
+        if config_changes:
+            write_json(config_path, config)
+    return {
+        "requirementChanges": changes,
+        "bicepConfigChanges": config_changes,
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=".")
     parser.add_argument("--request", required=True)
-    parser.add_argument("--deadline-seconds", type=float, default=430)
+    parser.add_argument("--deadline-seconds", type=float, default=330)
     parser.add_argument("--evidence-timeout", type=float, default=195)
     parser.add_argument("--author-timeout", type=float, default=135)
     parser.add_argument("--review-timeout", type=float, default=45)
@@ -398,7 +440,13 @@ def main() -> int:
         run_dir = Path(args.artifact_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
-        run_dir = Path(tempfile.mkdtemp(prefix="app-modeling-")).resolve()
+        run_dir = (
+            repository_root
+            / ".git"
+            / "app-modeling-runs"
+            / (time.strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
+        ).resolve()
+        run_dir.mkdir(parents=True, exist_ok=False)
     candidate = run_dir / "candidate"
     candidate.mkdir(parents=True, exist_ok=True)
     installed: list[Path] = []
@@ -434,10 +482,11 @@ Expected/golden application definitions are unavailable.
             agent="radius-model-reviewer",
             session_id=reviewer_session,
             prompt=(
-                "Independently derive source facts, select the profile required by "
-                "the user request, then resolve only that profile's exact Radius "
-                "contracts. Return compact JSON with status, facts, and blockers. "
-                "Do not write files.\n" + common
+                "Independently derive cited source facts and select the profile "
+                "required by the user request. Do not inspect or select Radius "
+                "types; the parent resolves contracts after source facts close. "
+                "Return compact JSON with status, facts, and blockers. Do not "
+                "write files.\n" + common
             ),
             timeout=min(args.evidence_timeout, remaining(deadline)),
             effort="low",
@@ -549,7 +598,7 @@ Expected/golden application definitions are unavailable.
         handoff_errors = validate_handoff(candidate)
         shutil.copytree(candidate, run_dir / "candidate-initial")
         reconciliation = (
-            {"changes": []}
+            {"requirementChanges": [], "bicepConfigChanges": []}
             if handoff_errors
             else reconcile_requirements(candidate, authoring_contract)
         )
@@ -640,9 +689,11 @@ Return a compact audit JSON for {candidate / 'app.bicep'} using only
                 session_id=writer_session,
                 prompt=f"""
 Repair every item in {run_dir / 'validation-1.json'} and
-{run_dir / 'review-1.json'} once. Preserve all cited source behavior. Reconcile
-security, composite values, persistence, process semantics, and graph impact
-together. Do not read validator source or rescan the repository.
+{run_dir / 'review-1.json'} once. Change only fields required by those findings;
+preserve every validator-clean source, secret, protocol, persistence, process,
+and graph binding from the initial candidate. Reconcile the full tuple only
+when a cited finding changes its representation. Do not read validator source
+or rescan the repository.
 """,
                 timeout=min(args.repair_timeout, remaining(deadline)),
                 resume=True,

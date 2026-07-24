@@ -20,9 +20,10 @@ the independent evidence rather than trusting the author's ledgers.
 
 Reject missing or extra workloads/dependencies, unusable source builds, changed
 process or listener behavior, incomplete native settings or protocol tuples,
-wrong Recipe outputs or exposed secret keys, insecure values, Bicep-composed
-credentials, shell `$${...}` PID expansion, missing persistence, and missing
-graph relationships. Compilation is necessary but not sufficient.
+invented environment/configuration keys absent from source, wrong Recipe
+outputs or exposed secret keys, insecure values, Bicep-composed credentials,
+shell `$${...}` PID expansion, missing persistence, and missing graph
+relationships. Compilation is necessary but not sufficient.
 Treat a bundle's Recipe block as provenance for the Environment-registered
 Recipe and its outputs, not as a required `recipe` property on the application
 resource. Never demand a property absent from the exact bundled type schema.

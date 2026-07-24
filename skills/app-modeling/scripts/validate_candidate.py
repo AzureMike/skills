@@ -104,6 +104,18 @@ def validate_ref(errors, path, source):
     return ref
 
 
+def git_remote_prefixes(remote):
+    normalized = remote.strip().rstrip("/")
+    if normalized.endswith(".git"):
+        repositories = {normalized, normalized[:-4]}
+    else:
+        repositories = {normalized, normalized + ".git"}
+    return tuple(
+        f"git::{repository}//"
+        for repository in sorted(repositories, key=len, reverse=True)
+    )
+
+
 def validate_template(
     template,
     contract,
@@ -201,17 +213,26 @@ def validate_template(
                     "workstation paths are not deployable by the stock Recipe.",
                 )
             if source_remote and isinstance(build_source, str):
-                expected_prefix = f"git::{source_remote.rstrip('/')}//"
-                if not build_source.startswith(expected_prefix):
+                expected_prefixes = git_remote_prefixes(source_remote)
+                matched_prefix = next(
+                    (
+                        prefix
+                        for prefix in expected_prefixes
+                        if build_source.startswith(prefix)
+                    ),
+                    None,
+                )
+                if not matched_prefix:
                     error(
                         errors,
                         "SOURCE_REMOTE",
                         f"{path}.properties.build.source",
-                        f"Expected source repository prefix {expected_prefix!r}.",
+                        "Expected the checked-out source repository prefix "
+                        f"(accepted forms: {', '.join(repr(item) for item in expected_prefixes)}).",
                     )
                 elif source_path and source_path != ".":
                     source_locator = build_source.split("?ref=", 1)[0]
-                    build_path = source_locator.removeprefix(expected_prefix)
+                    build_path = source_locator.removeprefix(matched_prefix)
                     if not (
                         build_path == source_path
                         or build_path.startswith(source_path.rstrip("/") + "/")

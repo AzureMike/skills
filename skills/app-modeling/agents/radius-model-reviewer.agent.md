@@ -41,6 +41,11 @@ When a dependency image version comes only from a development or test manifest,
 label it `versionScope: developmentImplementation`; it is evidence of the
 protocol path, not a production version requirement.
 
+Distinguish runtime inputs from hardcoded behavior. Never label a synthesized
+name as an application setting. When source hardcodes a dependency port or
+protocol value, record its value and citation as a source default; when it is
+configurable, record the exact consumed environment key, flag, or config path.
+
 Select the workload packaging and its dependency profile independently, then
 prove they are compatible at the same revision. Use the production
 Dockerfile/image, entrypoint, and listener even when the repository's canonical

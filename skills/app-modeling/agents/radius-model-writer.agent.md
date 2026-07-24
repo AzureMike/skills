@@ -50,8 +50,10 @@ Work in this order:
    evidence files.
 
 Use `extension.reference` from `assets/radius-contract.json` verbatim in
-`bicepconfig.json`; mutable `latest` is prohibited. Declare it in Bicep using
-exactly `extension radius` without a `with` configuration block. Do not
+`bicepconfig.json`, and set
+`experimentalFeaturesEnabled.extensibility: true`; mutable `latest` is
+prohibited. Declare it in Bicep using exactly `extension radius` without a
+`with` configuration block. Do not
 compile, grep, self-review, or run the mechanical validator. Return immediately
 after the fourth file is written because the parent loop owns all validation.
 
@@ -100,7 +102,9 @@ command, `secretKeyRef` for a secret environment input, and `sourceDefault`
 only for a behavior actually provided by unmodified source defaults.
 When `binding.port` or `binding.portLiteral` exists, render that numeric port
 literally in the native client endpoint even if the URI scheme has the same
-default port.
+default port. If source hardcodes that same port, record `sourceDefault` with
+the numeric value and emit no invented environment variable. Never create an
+environment or configuration key that the cited source does not consume.
 
 Every backing dependency needs complete app-native configuration plus a Radius
 connection. Set `disableDefaultEnvVars: true` unless source consumes the exact

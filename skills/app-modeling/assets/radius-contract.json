@@ -100,7 +100,8 @@
     "allBicepDiagnosticsFailValidation": true,
     "connectionsDoNotReplaceNativeClientConfig": true,
     "defaultExposure": "none",
-    "managedSecretsUseSecretKeyRef": true,
+    "secretEnvironmentUsesSecretKeyRef": true,
+    "developerSuppliedSecretEnvironmentUsesAuthoredSecret": true,
     "providerConnectionStringsRequireClientGrammarProof": true,
     "providerGlobalNamesUseRequiredParameters": true,
     "schemaEscapeFunctionsForbidden": [
