@@ -343,6 +343,25 @@ def validate_requirements(template, contract, requirements, errors):
             "Container scripts must preserve shell ${...} literally; $${...} "
             "expands $$ as the shell process ID.",
         )
+    secret_keys = {
+        key
+        for key, body in env.items()
+        if isinstance(body, dict)
+        and body.get("valueFrom", {}).get("secretKeyRef")
+    }
+    for name, body in env.items():
+        value = body.get("value") if isinstance(body, dict) else None
+        if not isinstance(value, str):
+            continue
+        for secret_key in secret_keys:
+            if re.search(rf"\$(?:\{{{re.escape(secret_key)}\}}|{re.escape(secret_key)}\b)", value):
+                error(
+                    errors,
+                    "UNEXPANDED_SECRET_COMPOSITE",
+                    f"$.runtimeConfig.env.{name}",
+                    f"Container env.value does not expand ${secret_key}; construct "
+                    "the secret-bearing composite in command/args at runtime.",
+                )
 
     dependencies = {
         item.get("resourceSymbol"): item

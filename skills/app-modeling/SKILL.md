@@ -53,6 +53,18 @@ server version or plaintext example is not a production constraint when cited
 source supports the provider tuple. Conversely, never enable an optional
 source feature merely to justify a Radius resource.
 
+Use the repository's complete documented application profile, not merely the
+Dockerfile's unset fallback behavior. When a canonical manifest combines the
+production-buildable workload with a first-class backing service consumed by
+that production code, retain the backing service and its native settings while
+excluding development-only companion workloads individually. Do not replace it
+with a local fallback database solely because its selector is unset in the
+image. A user-facing HTTP workload requires a route unless source proves it is
+internal-only.
+
+Stay bounded: use at most four batched source inspections. Do not build the
+application, browse the network, or search outside the repository.
+
 ### 2. Resolve Radius contracts
 
 Only after `source-facts.json` exists, map mandatory dependencies to the
@@ -68,6 +80,11 @@ volume types actually needed. Treat each returned schema, Recipe mapping,
 managed-secret key, protocol profile, and extension reference as authoritative.
 Recipe metadata describes the Environment implementation and outputs; it is
 not an application resource property.
+
+Never run `contract_query.py list` or `--help`, inspect the full contract JSON,
+or query unused types. Use at most one `bundle` call per selected type. Resolve
+release provenance locally with `git tag --points-at HEAD` and cited repository
+release workflows; never call GitHub or a registry.
 
 Mechanically reconcile every dependency as one tuple: native key, endpoint,
 literal port, protocol, TLS, auth mechanism, username, secret, composite
@@ -92,7 +109,9 @@ Write a fresh `.radius/app.bicep` and `.radius/bicepconfig.json`.
   credentials directly from the verified managed secret and key.
 - Construct secret-bearing composite values only at runtime. Preserve literal
   shell values such as Kafka's `$ConnectionString` while expanding only the
-  secret environment variable.
+  secret environment variable. A container `env.value` never expands another
+  environment variable: override the source image's command with `/bin/sh -c`,
+  export the composite there, then `exec` the exact original entrypoint.
 - Emit a persistent volume only for a source-cited path required by the
   selected profile. Omit optional schema inputs, including provider versions,
   when source evidence does not select them.
