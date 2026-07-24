@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "dependencies",
+    "persistentPaths",
+    "secretEnvironment"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "resourceSymbol",
+          "settings"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "resourceSymbol": {
+            "type": "string"
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "evidence",
+                "delivery"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "delivery": {
+                  "type": "object",
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "env",
+                        "literal",
+                        "runtimeConfig",
+                        "secretKeyRef",
+                        "sourceDefault"
+                      ]
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ]
+                    },
+                    "secretKey": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "persistentPaths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "containerResourceSymbol",
+          "container",
+          "path",
+          "required"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "containerResourceSymbol": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "secretEnvironment": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

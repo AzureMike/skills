@@ -44,9 +44,10 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
         }
       }
     }
-    connections: {                    // optional TOP-LEVEL relationship map
+    connections: {                    // required for each backing relationship
       mysqldb: {                     // object map, NOT array
         source: mysqlDb.id
+        disableDefaultEnvVars: true  // native variables are bound above
       }
     }
   }
@@ -64,7 +65,7 @@ Rules:
 - `containerPort` exposes the process port; it does not configure the process listener
 - `command` replaces the image `ENTRYPOINT`, and `args` replaces `CMD`; override only after inspecting the image contract and required binaries
 - Never **set** a read-only property. Reference a nonsecret read-only output only when the exact schema declares it and the exact target Recipe explicitly maps it
-- A direct resource output, image, or secret reference creates dependency ordering; `connections` is not mandatory for ordering
+- A direct resource output, image, or secret reference creates deployment ordering; `connections` still records each workload-to-backing-resource graph relationship
 - Include every co-scheduled role required by the selected profile in the `containers` map. A producer, consumer, proxy, worker, or sidecar must have its own complete image/process/configuration entry
 - A startup-generated config file is valid only when the pinned image contains the shell/tools, the destination is writable, interpolation is safe, and the process is explicitly launched with that file
 

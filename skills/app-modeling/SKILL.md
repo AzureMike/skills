@@ -25,21 +25,36 @@ If no Dockerfile is present, stop immediately. Do not generate `.radius/app.bice
 
 > This repository does not contain a Dockerfile. The Radius app modeling skill currently supports only repositories that already include a Dockerfile for building the application image. Add a Dockerfile for the application service and run the skill again.
 
+## Bounded modeling loop
+
+After the Dockerfile prerequisite passes, do not inspect other source files or
+author Bicep in the parent session. Run the packaged loop exactly once:
+
+```bash
+python3 "<this-skill-directory>/scripts/run_evidence_loop.py" \
+  --target "<absolute-target-repository-or-application-directory>" \
+  --request "<the complete user request, verbatim>"
+```
+
+The loop derives independent source and contract evidence, hands it to a fresh
+author, compiles with warning-as-failure validation, reuses the evidence agent
+for independent review, permits one bounded repair, and delivers only an
+accepted candidate. Do not duplicate its
+investigation or fall back to manual authoring. If it fails, report its JSON
+status and retained artifact path.
+
 ## Response
 
 When asked to model a repository, first apply the [Prerequisites](#prerequisites) check. Only if it passes:
 
 1. If the requirement ledger cannot be closed against the exact source, schema, and target Environment recipe contracts, do not write, commit, or push a partial application definition. Report the mismatch and the compatible extension or recipe contract required.
-2. Generate the application definition and write both `.radius/app.bicep` and `.radius/bicepconfig.json` (see [bicepconfig.json](#bicepconfigjson)) to the current working branch of the target repository. If that branch does not exist yet, create it before writing.
-3. Commit both files to that branch, and push the branch when a remote is configured.
-4. In your chat reply, give a one-line intro naming the app (e.g. "I'll create an application definition for `todo-list-app`."), then a short, natural summary of the resources you identified — a brief list such as "Container: `todo-list-app`", "MySQL database", "Secure DB credential binding". A sentence or two of reasoning is fine; don't dump raw source analysis or the full file contents.
-5. Then ask whether to open a pull request against the default branch.
-
-Don't open the pull request automatically — wait for the user to confirm. If they confirm, open a PR from the working branch against the default branch with title `Add Radius application definition` and body `Add .radius/app.bicep and .radius/bicepconfig.json for <app-name>.`
+2. Generate the application definition and write only `.radius/app.bicep` and `.radius/bicepconfig.json` (see [bicepconfig.json](#bicepconfigjson)) in the target repository.
+3. Do not create a branch, commit, push, deploy, create cloud resources, or open a pull request unless the request explicitly asks for that separate action.
+4. In your chat reply, give a one-line intro naming the app (e.g. "I created an application definition for `todo-list-app`."), then a short, natural summary of the resources you identified — a brief list such as "Container: `todo-list-app`", "MySQL database", "Secure DB credential binding". A sentence or two of reasoning is fine; don't dump raw source analysis or the full file contents.
 
 ## Workflow
 
-Before writing the Bicep, confirm the repository satisfies the [Prerequisites](#prerequisites) (it must contain a Dockerfile); if not, stop and return the prerequisite error without modeling, generating, or writing anything. Then:
+Before writing the Bicep, confirm the repository satisfies the [Prerequisites](#prerequisites) (it must contain a Dockerfile); if not, stop and return the prerequisite error without modeling, generating, or writing anything. The packaged bounded loop executes and enforces the following workflow:
 
 1. Select one runnable deployment profile. Treat explicit user, scenario, and target-repository deployment requirements for Radius types, resource-name parameters, workload roles/count, native configuration keys, secret bindings, provider profile, protocol values, and connection names as acceptance criteria. Verify that the pinned source supports that profile; do not silently replace it with an easier default or optional backend.
 2. Build an internal requirement ledger that maps every acceptance criterion and planned resource property reference to source evidence, an exact Radius schema/recipe field, and the workload setting that consumes it. Use it for reasoning and validation; do not print it or add it as Bicep comments. Follow [runtime-contract.md](references/runtime-contract.md).
@@ -47,7 +62,7 @@ Before writing the Bicep, confirm the repository satisfies the [Prerequisites](#
 4. Extract each workload's runtime contract: image/build context and target platform, entrypoint and arguments, listener and ports, required environment/configuration including parser coercion and unset behavior, secrets, writable storage, dependencies, wire protocols, authentication/bootstrap setup, and feature-critical configuration. Inspect CLI flags and structured fields as well as environment variables.
 5. Map every selected backing service to a Radius type with [component-catalog.md](references/component-catalog.md), using [architecture-patterns.md](references/architecture-patterns.md) only as context. Report unsupported essential components instead of substituting unrelated types.
 6. First create or update `.radius/bicepconfig.json` (see [bicepconfig.json](#bicepconfigjson)), using any `bicepconfig.json` currently applicable to `.radius/app.bicep` as input. Resolve every emitted type and planned property read/write against the exact target Environment schema and Recipe contract, then reconcile that contract with the extension that `.radius/bicepconfig.json` declares. For every output, open the exact Environment recipe or matching immutable provider recipe-pack source and record the verbatim mapping; schema descriptions and property names are not recipe evidence. Also prove each managed-secret name/key, every omitted optional recipe input, and target Environment recipe availability for every emitted extensible type. The exact target schema and Recipe outrank stale mutable extension metadata such as `radius:latest`. Refresh or pin a verified compatible extension when possible; otherwise fail closed before generation rather than changing or deleting required wiring to fit the stale artifact.
-7. Build the application's own workloads from the repository Dockerfile via `Radius.Compute/containerImages`; use a pinned published image only for a genuinely third-party or backing container. Require a complete, practical build context and pin `build.source` to the exact modeled checkout or an explicit immutable release tag. Resolve the exact `containerImages` Recipe: set a Docker-valid immutable `tag` when its omitted-tag path is not proven usable, select explicit target-compatible `build.platforms` when the Dockerfile cannot safely build every default platform, and preserve required Git metadata with schema-supported build arguments. If an application workload's Dockerfile or context is unusable, report the packaging gap instead of substituting a published image for the application's own code. Map every runtime value using [connection-conventions.md](references/connection-conventions.md), [secrets-handling.md](references/secrets-handling.md), and [bicep-structure-rules.md](references/bicep-structure-rules.md).
+7. Build the application's own workloads from a clean-checkout Dockerfile via `Radius.Compute/containerImages`. Require a complete, practical build context and pin `build.source` to the exact modeled checkout or an explicit immutable release tag. Resolve the exact `containerImages` Recipe: set a Docker-valid immutable `tag` when its omitted-tag path is not proven usable, select explicit target-compatible `build.platforms` when the Dockerfile cannot safely build every default platform, and preserve required Git metadata with schema-supported build arguments. If that Dockerfile copies a generated artifact absent from Git and does not build it itself, use a published first-party image only when this exact checked-out release tag and its build metadata prove the source-corresponding official image; otherwise report the packaging gap. Never substitute a mutable tag, unrelated release, convenience image, or third-party repackaging for application code. Map every runtime value using [connection-conventions.md](references/connection-conventions.md), [secrets-handling.md](references/secrets-handling.md), and [bicep-structure-rules.md](references/bicep-structure-rules.md).
 8. Generate the Bicep using [naming-conventions.md](references/naming-conventions.md), then compile it with an extension compatible with the exact target contract. Treat unknown type/property warnings as unresolved schema mismatches. Never make compilation pass by deleting a required backend activation, native configuration value, secret binding, or dependency edge.
 9. Perform the [validation checklist](#validation-checklist) and close every item in the requirement ledger. Compilation or process startup alone is not success.
 
@@ -55,10 +70,17 @@ Before writing the Bicep, confirm the repository satisfies the [Prerequisites](#
 
 - **Explicit profile wins:** If the request names a supported Radius type, provider profile, workload role, native key, protocol value, secret binding, or relationship, model it exactly when the pinned source supports it. A source default or another valid deployment profile does not satisfy that request.
 - **Source compatibility is still mandatory:** Resolve behavior from the requested commit/tag, not a different release or the current default branch. If an acceptance criterion conflicts with that source revision, stop and report the conflict instead of inventing compatibility.
+- **Production dependency versions are acceptance criteria:** Preserve a
+  backing-service version pinned by the selected production profile. A
+  development/test container tag may prove that the application supports that
+  dependency kind and configuration path, but it is not a production version
+  requirement when production packaging is selected independently. If an
+  actual production pin cannot be represented by the exact Radius contract,
+  select another source-backed profile or stop before writing.
 - **No implicit omissions:** Each required typed resource must be emitted and wired to a consumer. Each required workload role must have a runnable process and complete config. Each required native key/value must appear in the exact source-supported location and format.
-- **No decorative wiring:** Environment variables, connections, and resources must be consumed by the selected feature path. Merely declaring a dependency or starting a process does not prove the requested database, model, storage, or messaging path works.
+- **No decorative wiring:** Environment variables and resources must be consumed by the selected feature path, and every connection must represent a real workload dependency. Merely declaring a dependency or starting a process does not prove the requested database, model, storage, or messaging path works.
 - **Mandatory dependencies only:** Model only services required by the selected runnable path. Imports, package extras, adapters, examples, tests, or alternate configurations elsewhere in the repository do not prove that a backing service is required.
-- **Infer only when unspecified:** Without an explicit profile, prefer a complete, documented manifest/configuration that exercises the application's primary feature. If multiple materially different profiles remain valid, ask the user rather than choosing an optional backend arbitrarily.
+- **Infer only when unspecified:** Without an explicit profile, prefer a complete, documented manifest/configuration that exercises the application's primary feature. Select production workload packaging independently from that manifest's dependency path when the same revision proves they are compatible; for example, keep a source-supported database while replacing development-only live-reload, proxy, and debugging workloads with the production image. If multiple materially different profiles remain valid, ask the user rather than choosing an optional backend arbitrarily.
 - **Fail closed on verified incompatibility:** Fully implement every clearly supported criterion. Stop after evidence proves the pinned source or exact schema/recipe cannot satisfy a requirement; do not return a partial definition as deployable, leave unresolved runtime caveats, or delete feature-critical wiring to obtain a clean compile.
 
 ### Repairing an existing app.bicep
@@ -177,12 +199,12 @@ Declare exactly one extension, `extension radius`. It provides every Radius type
     "extensibility": true
   },
   "extensions": {
-    "radius": "br:biceptypes.azurecr.io/radius:latest"
+    "radius": "br:biceptypes.azurecr.io/radius:0.60.0-rc1"
   }
 }
 ```
 
-Default to the `radius:latest` tag only when no exact target Environment contract is available. Pin a verified compatible immutable reference when one is provided by an existing `bicepconfig.json`, the user, or the target Environment. If `radius:latest` is proven to disagree with the target schema or Recipe, replace it with a verified compatible reference or fail closed; never weaken `app.bicep` to fit the mutable artifact.
+The fallback above is the verified immutable reference from the Azure Recipe contract. Prefer another immutable reference only when an existing `bicepconfig.json`, the user, or the target Environment provides an exact compatible contract. Never emit `radius:latest` or another mutable extension reference. If no immutable extension can be reconciled with the target schema and Recipe, fail closed; never weaken `app.bicep` to fit a mutable artifact.
 
 ## app.bicep Structure (mandatory order)
 
@@ -211,10 +233,11 @@ Rules:
 Rules:
 - Inspect the source to identify the exact names, casing, value format, defaults, and configuration mechanism it consumes.
 - Generic projection can be a `CONNECTION_<NAME>_PROPERTIES` JSON value, individual `CONNECTION_<NAME>_<PROPERTY>` values, or another version-specific shape. Verify the configured extension/runtime contract; do not assume one format.
-- Use a connection alone only when the application explicitly consumes that applicable generic contract. Otherwise map each required native input explicitly from a verified nonsecret resource output, a secret reference, a literal/default, or runtime composition.
-- A direct resource property or secret reference creates dependency ordering. Do not add a connection merely for ordering; retain one only when the application/tooling consumes the relationship.
+- Add one connection for every workload-to-backing-resource relationship, using the exact requested name or the deterministic naming rules. A connection records the Radius graph edge but does not configure the client.
+- Use a connection alone only when the application explicitly consumes that applicable generic contract. Otherwise map each required native input explicitly from a verified nonsecret resource output, a secret reference, a literal/default, or runtime composition, and set `disableDefaultEnvVars: true` on the connection.
+- A direct resource property or secret reference creates deployment ordering, but it does not replace the required Radius graph relationship.
 - An explicit request for Radius relationship metadata is a valid reason to retain a connection. Use the exact requested connection key and `source`; explicit native wiring may still be required for the workload.
-- Explicit native variables may coexist with generic projection. Avoid conflicting values, and use `disableDefaultEnvVars` only when the exact container schema supports it and the generic variables would be harmful.
+- Explicit native variables may coexist with the graph connection. When native variables are used, disable generic projection with `disableDefaultEnvVars: true` to avoid conflicting values.
 
 ## Secrets
 
@@ -239,7 +262,7 @@ Before returning the Bicep, verify:
 - [ ] The target Environment has a usable Recipe for every emitted extensible type, including support resources such as `Radius.Security/secrets` and `Radius.Compute/containerImages`.
 - [ ] `param environment string` is declared; add a `@secure() param` for each developer-supplied secret.
 - [ ] Every required executable role is modeled, including co-scheduled producer/consumer or proxy/backend roles. Its image/build, entrypoint/arguments, listener, exposed ports, config artifacts, writable storage/ownership, authentication/bootstrap path, and lifecycle are correct. `containerPort` matches the process; it does not configure the listener.
-- [ ] Every required app-native input is supplied with the exact pinned-source name, casing, representation, parser coercion, unset behavior, URL/config syntax, and value. String values preserve source semantics; for example, a source that evaluates `Boolean(value)` must not receive non-empty `'false'` to mean false. Each generic connection is consumed by source or explicitly required as relationship metadata.
+- [ ] Every required app-native input is supplied with the exact pinned-source name, casing, representation, parser coercion, unset behavior, URL/config syntax, and value. String values preserve source semantics; for example, a source that evaluates `Boolean(value)` must not receive non-empty `'false'` to mean false. Every workload-to-backing-resource relationship has a connection; its generic projection is consumed by source or disabled with `disableDefaultEnvVars: true`.
 - [ ] The application's own workloads build from a complete practical repository Dockerfile/context through `Radius.Compute/containerImages`, with `build.source` pinned to the exact modeled checkout or an explicit immutable release tag. Published images are pinned and used only for genuinely third-party/backing containers. An omitted image tag is proven usable in the exact Recipe or a Docker-valid immutable tag is set. Selected platforms match the Dockerfile's proven cross-build behavior and target runtime. Required Git metadata is preserved with schema-supported build arguments. Generated builds are consumed through `.properties.imageReference`.
 - [ ] Credentials match the type's schema: `username`+`password` on the resource, or `secretName`+secret, or none — whichever the schema defines. Password via `@secure() param`; `database`/`topic`/`queue`/etc. derived from source.
 - [ ] A developer-supplied credential the app consumes reaches the exact native key from the same `@secure()` parameter through `env.value`, never through an authored wrapper secret or `secretKeyRef`. Recipe-generated values bind with `secretKeyRef` only from the exact nested managed-secret name and key. Authored `Radius.Security/secrets` are limited to genuine app secrets/config files or schema-required `secretName` inputs. No authored secret copies an output, guesses a convenience property, or interpolates an aggregate credential-bearing URL/config.
@@ -252,4 +275,8 @@ Before returning the Bicep, verify:
 
 ## Example
 
-See [todo-list-app-example.md](references/todo-list-app-example.md) for source-derived modeling decisions when an application expects native database variables instead of Radius generic connection variables.
+Use [connection-conventions.md](references/connection-conventions.md) and
+[runtime-contract.md](references/runtime-contract.md) for the general native
+client-wiring pattern. A bundled example must never select a deployment
+profile, dependency version, workload role, or backing service for the current
+repository.

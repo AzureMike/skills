@@ -29,19 +29,22 @@ For every dependency:
 
 An unmodified third-party image usually expects its own native variables or configuration. A connection alone does not configure it unless its source already understands the projected `CONNECTION_*` contract. A provider-specific `host` output may also require a documented suffix, port, TLS mode, or auth block before it is a usable client endpoint. Requiring an operator to configure the dependency later through an admin UI or API does not make the generated deployment runnable.
 
-## Source consumes the generic contract
+## Declare the relationship
 
-When the application explicitly parses the exact projection supplied by the target Radius version, or the selected profile explicitly requires Radius relationship metadata, declare the relationship with the required key:
+Declare every workload-to-backing-resource relationship with the exact requested key or the deterministic naming rules:
 
 ```bicep
 connections: {
   database: {
     source: database.id
+    disableDefaultEnvVars: true
   }
 }
 ```
 
 `connections` is a top-level object map under container resource `properties`, not inside an individual container.
+Omit `disableDefaultEnvVars` only when the source consumes the verified generic
+projection.
 
 ## Source expects native configuration
 
@@ -66,9 +69,9 @@ containers: {
 }
 ```
 
-This is a representative pattern, not a required variable naming scheme. `APP_DB_PASSWORD` is set from the same `@secure()` parameter supplied to the database resource; Radius encrypts and injects it into the container without materializing it into plain state, so do not wrap it in an authored secret. Confirm that `host` is explicitly mapped by the exact Recipe and that the app-native variables exist in the pinned source. Direct resource references create dependency ordering, so a connection is not required merely to order deployment.
+This is a representative pattern, not a required variable naming scheme. `APP_DB_PASSWORD` is set from the same `@secure()` parameter supplied to the database resource; Radius encrypts and injects it into the container without materializing it into plain state, so do not wrap it in an authored secret. Confirm that `host` is explicitly mapped by the exact Recipe and that the app-native variables exist in the pinned source. Direct resource references create deployment ordering, but the connection is still required to record the Radius graph relationship.
 
-Keep a connection alongside native variables when the source consumes generic values or the selected profile explicitly requires Radius relationship metadata. Explicit native variables are not categorically forbidden just because generic projection exists. Ensure duplicate names do not carry conflicting values.
+Keep the connection alongside native variables and set `disableDefaultEnvVars: true` so unconsumed generic values aren't projected. Explicit native variables remain required because the connection does not invent application-specific settings.
 
 ## Rules
 
@@ -77,8 +80,8 @@ Keep a connection alongside native variables when the source consumes generic va
 3. Sensitive recipe outputs may be omitted from generic projection. Resolve and bind them through the exact secret contract described in [secrets-handling.md](secrets-handling.md).
    A recipe-generated sensitive app-native key must use an explicit `secretKeyRef` even when its name looks exactly like `CONNECTION_<NAME>_<PROPERTY>`; the matching connection does not project the secret. Bind it directly from schema-declared managed-secret metadata, never through an authored wrapper or guessed resource property. A developer-supplied credential you already hold as a `@secure()` parameter goes straight to `env.value` instead.
 4. Reference a nonsecret read-only output only when the exact schema exposes it and the exact target Recipe maps it. Do not **set** read-only properties.
-5. Use `disableDefaultEnvVars` only on the connection entry, only when the exact container schema supports it, and only when generic projection would conflict with the application.
+5. Use `disableDefaultEnvVars` only on the connection entry. Set it to `true` whenever the workload uses native configuration instead of the generic projection.
 6. Treat case, number-to-string conversion, URL encoding, TLS mode, and protocol-specific formatting as part of the app's runtime contract.
 7. Preserve exact relationship names and provider/runtime values supplied by an explicit compatible profile; do not normalize them to generic defaults.
-8. Do not count a connected resource as used unless the selected feature path consumes its projection or explicit native wiring.
+8. Do not count a connected resource as used unless the selected feature path consumes its projection or explicit native wiring. Every modeled workload-to-backing-resource dependency still requires the graph connection.
 9. If schema drift blocks required native or nested managed-secret wiring, resolve a compatible extension or fail closed. Never delete the binding and retain only a connection to obtain a clean compile.

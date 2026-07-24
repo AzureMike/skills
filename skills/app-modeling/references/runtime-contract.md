@@ -38,7 +38,7 @@ Create a requirement ledger before writing Bicep:
 | Provider resource name | Exact explicit parameter and provider naming/uniqueness constraint when the Recipe or verification couples them |
 | Connection | Exact requested relationship name and source; projection use if relied upon |
 
-Every row must map to emitted Bicep and a real consumer. A declared but unused variable, connection, or resource does not close the row. A Recipe in a default pack does not prove that a custom target Environment registers it.
+Every row must map to emitted Bicep and a real consumer. A declared but unused variable or resource does not close the row, and a connection must represent a real workload dependency. A Recipe in a default pack does not prove that a custom target Environment registers it.
 
 Before writing Bicep, enumerate every planned resource property read and write as a separate ledger row. Record the verbatim path and prove it against the exact target schema and API version. For a generated output, open the exact target Environment Recipe or matching immutable provider recipe-pack source and record the verbatim output mapping; schema prose, property names, and READMEs do not prove that a deployed Recipe returns a value. Also prove that the target Environment registers every emitted type and that every omitted optional Recipe input has a safe absent/null path. For a managed secret, prove the declared nested secret-name path and exact key; key declarations are metadata, not readable secret values. The consumer must use that managed secret directly through `secretKeyRef`; any row that reads the key as a resource property or copies it into an authored secret fails preflight.
 
@@ -73,7 +73,7 @@ For each required app-native input, choose exactly one supported source:
 - runtime composition from previously bound values when the app requires a larger URL/config value; or
 - a generic Radius connection only when the source parses the exact connection projection supplied by the configured Radius version.
 
-Do not leave a required input implicit because a resource is connected. A direct property or secret reference creates a dependency edge without a connection.
+Do not leave a required input implicit because a resource is connected. Add a connection for every workload-to-backing-resource relationship, then bind native settings explicitly and disable generic projection when the source doesn't consume it.
 
 Environment values are strings unless the exact container contract proves otherwise. Trace source parsing and unset behavior. Do not encode false as the non-empty string `'false'` when source uses truthiness such as `Boolean(value)`; omit an optional key or use the exact false representation the pinned source accepts.
 
@@ -140,7 +140,7 @@ Before returning the model:
 6. Confirm every source build pins the modeled revision, supplies safe values for broken optional Recipe paths, selects compatible platforms, and preserves required Git metadata.
 7. Confirm every command/argument and generated config file is compatible with the image entrypoint and available binaries.
 8. Confirm every writable/persistent path has the required ownership and access mode.
-9. Confirm every connection is consumed by source or intentionally retained because the selected profile requires Radius relationship metadata.
+9. Confirm every workload-to-backing-resource dependency has a connection. Its projection must be consumed by source or disabled with `disableDefaultEnvVars: true`; native settings must remain complete.
 10. Confirm the complete dependency tuple for every edge, including provider-specific endpoint transformations, TLS, auth, URL encoding, and final client syntax.
 11. Confirm each workload's primary feature is ready and every selected typed resource is both mandatory and used by that feature.
 12. Confirm no required binding or dependency was deleted to satisfy stale mutable extension metadata or obtain a clean compile.
