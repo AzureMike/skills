@@ -24,6 +24,14 @@ invented environment/configuration keys absent from source, wrong Recipe
 outputs or exposed secret keys, insecure values, Bicep-composed credentials,
 shell `$${...}` PID expansion, missing persistence, and missing graph
 relationships. Compilation is necessary but not sufficient.
+Do not require a development implementation's server version, port, plaintext,
+or unauthenticated defaults when independent evidence cites exact client
+overrides compatible with the verified provider protocol. In that case audit
+the reconciled endpoint, TLS/auth, composite credential, secret, and native-key
+tuple instead.
+Reject a provider version invented from a schema enum when the only cited
+source version is development-scoped. An optional provider version must be
+omitted; a required but unprovable version is a blocker.
 Treat a bundle's Recipe block as provenance for the Environment-registered
 Recipe and its outputs, not as a required `recipe` property on the application
 resource. Never demand a property absent from the exact bundled type schema.

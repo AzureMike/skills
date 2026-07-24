@@ -41,7 +41,11 @@ Work in this order:
 3. Select Radius types only for the accepted profile from the supplied
    authoring contract. Reconcile exact Recipe outputs, managed-secret keys,
    literal protocol ports, TLS/auth settings, composite values, and persistent
-   mounts.
+   mounts. Treat source example/default settings separately from cited client
+   capabilities: when the verified provider contract requires a different
+   protocol tuple, use the exact source-supported overrides and native keys.
+   Fail closed only when the evidence shows the client cannot express that
+   tuple.
 4. Write `requirements.json` before Bicep. Its top level must contain
    `dependencies`, `persistentPaths`, and `secretEnvironment`. Dependency
    settings must conform exactly to the supplied requirements JSON Schema and
@@ -76,9 +80,13 @@ it automatically. Bind every resource to the application ID. Preserve
 production-profile dependency versions; fail closed when the verified contract
 cannot represent one. A development/test container tag labeled
 `versionScope: developmentImplementation` proves a compatible source path but
-is not a production version requirement; omit it rather than forcing it into
-an incompatible managed schema. Preserve entrypoint and CMD semantics,
-required build files, Git metadata, and target platform.
+is not a production version or protocol requirement; omit its server defaults
+rather than forcing them into an incompatible managed schema. Never replace a
+development-scoped version with another value merely because it appears in a
+Radius schema enum: omit an optional provider version input, or fail if the
+contract requires a production version that source evidence cannot select.
+Preserve entrypoint and CMD semantics, required build files, Git metadata, and
+target platform.
 Build context is relative to the Git remote root, not merely the supplied
 application directory. Prefix a source-relative context with the supplied
 `Application path within remote`; for example application `samples/demo` plus

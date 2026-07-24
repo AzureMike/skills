@@ -39,12 +39,22 @@ internal data directory; its Recipe owns provider persistence. Use
 profile. Put these fields at the top of `facts`, not only inside a workload.
 When a dependency image version comes only from a development or test manifest,
 label it `versionScope: developmentImplementation`; it is evidence of the
-protocol path, not a production version requirement.
+client path, not a production version or protocol requirement.
 
 Distinguish runtime inputs from hardcoded behavior. Never label a synthesized
 name as an application setting. When source hardcodes a dependency port or
 protocol value, record its value and citation as a source default; when it is
 configurable, record the exact consumed environment key, flag, or config path.
+For each selected dependency, separate the example/default server tuple from
+the application's supported client tuple. Inspect the selected client's
+configuration path far enough to cite every supported override needed for
+endpoint, port, protocol, TLS, authentication mechanism, username, password,
+and composite credential grammar. Record those under the dependency's
+`supportedOverrides`, including exact native keys and parser behavior. A
+development manifest's plaintext or unauthenticated server is an implementation
+example, not an immutable production requirement when the same client accepts
+cited secure settings. Do not reject supported TLS or authentication profiles
+merely because the simplest source example leaves them unset.
 
 Select the workload packaging and its dependency profile independently, then
 prove they are compatible at the same revision. Use the production
