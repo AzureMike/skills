@@ -28,29 +28,89 @@ If none exists, create no files and return:
 
 ## Generate
 
-After the prerequisite passes, do not inspect additional source or author
-Bicep in this parent session. Run the packaged workflow exactly once:
+Work directly in the current session. Do not invoke nested agents or
+`run_evidence_loop.py`. Keep evidence and validation artifacts under
+`<git-dir>/app-modeling-run/`; write only the final two files under `.radius/`.
+
+### 1. Close source facts
+
+Before inspecting Radius contracts or writing Bicep, select the minimum
+production profile and write `source-facts.json`. Cite exact files and lines
+for:
+
+- production workloads, clean-checkout Dockerfile contexts or an exact
+  source-corresponding first-party release image;
+- entrypoints, arguments, listeners, routes, required configuration keys,
+  parser/default behavior, and secrets;
+- mandatory backing dependencies and their app-supported endpoint, port,
+  protocol, TLS, authentication, and composite-value settings; and
+- application paths whose data must persist across workload replacement.
+
+Separate source defaults and development implementations from configurable
+client capabilities. Exclude optional adapters, admin/debug services, proxies,
+live reload, migrations, and optional persistence features. A development
+server version or plaintext example is not a production constraint when cited
+source supports the provider tuple. Conversely, never enable an optional
+source feature merely to justify a Radius resource.
+
+### 2. Resolve Radius contracts
+
+Only after `source-facts.json` exists, map mandatory dependencies to the
+smallest matching Radius type set. Query each selected type; do not enumerate
+types or infer properties:
 
 ```bash
-python3 "<skill-directory>/scripts/run_evidence_loop.py" \
-  --target "<absolute-application-directory>" \
-  --request "<complete user request verbatim>"
+python3 "<skill-directory>/scripts/contract_query.py" bundle "<qualified-type>"
 ```
 
-The workflow:
+Also query the base application, container, image, secret, route, or persistent
+volume types actually needed. Treat each returned schema, Recipe mapping,
+managed-secret key, protocol profile, and extension reference as authoritative.
+Recipe metadata describes the Environment implementation and outputs; it is
+not an application resource property.
 
-1. derives cited source facts without selecting Radius types;
-2. resolves only the required types from the bundled verified contract;
-3. authors a fresh candidate and requirement ledger;
-4. compiles and mechanically reconciles the candidate;
-5. independently audits the exact candidate;
-6. permits at most one bounded, finding-directed repair; and
-7. publishes only a mechanically valid, independently accepted candidate.
+Mechanically reconcile every dependency as one tuple: native key, endpoint,
+literal port, protocol, TLS, auth mechanism, username, secret, composite
+grammar, connection edge, and persistence. Write the result to
+`requirements.json` using `schemas/requirements.schema.json` before Bicep.
 
-Treat the workflow's final JSON object as authoritative. On failure, report its
-reason and artifact directory. Do not inspect its internal artifacts, modify
-the repository, retry, or fall back to manual authoring. Never delete the
-reported artifact directory.
+### 3. Author once
+
+Write a fresh `.radius/app.bicep` and `.radius/bicepconfig.json`.
+
+- Declare `extension radius`, `param environment string`, one application, and
+  bind every resource to `environment` and the application ID.
+- Build usable application Dockerfiles from the immutable checked-out source.
+  If a Dockerfile requires an absent generated artifact, use only a verified
+  exact first-party release image for the same revision. A release tag is
+  acceptable; never invent a digest.
+- Configure every dependency through exact source-native settings plus a Radius
+  connection with generic projection disabled when the source does not consume
+  it.
+- Put developer-supplied credentials through `@secure()` parameters and an
+  authored Radius secret when a container consumes them. Bind Recipe-generated
+  credentials directly from the verified managed secret and key.
+- Construct secret-bearing composite values only at runtime. Preserve literal
+  shell values such as Kafka's `$ConnectionString` while expanding only the
+  secret environment variable.
+- Emit a persistent volume only for a source-cited path required by the
+  selected profile. Omit optional schema inputs, including provider versions,
+  when source evidence does not select them.
+
+### 4. Validate and repair at most once
+
+Run `scripts/validate_candidate.py` with the two `.radius` files,
+`requirements.json`, source remote, commit, and application path. Treat every
+Bicep diagnostic, including warnings, as failure. If validation fails, make one
+finding-directed repair without changing validator-clean source bindings, then
+run it once more.
+
+Finally compare the exact validated files against `source-facts.json` and the
+queried bundles. Reject missing or extra workloads/dependencies, invented
+settings, changed process/listener behavior, insecure secrets, incomplete
+protocol tuples, optional persistence, and missing graph edges. On any
+remaining mismatch, remove the two output files and report the retained
+artifact directory and blocker.
 
 ## Invariants
 
