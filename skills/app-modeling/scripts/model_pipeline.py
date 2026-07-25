@@ -58,6 +58,39 @@ def identifier(value: str) -> str:
     return result
 
 
+def slug(value: str) -> str:
+    return "-".join(re.findall(r"[A-Za-z0-9]+", value)).lower()
+
+
+def resource_name(value: str) -> str:
+    """Slugify a human display name into a valid Radius resource name.
+
+    Resource names become Kubernetes object names, so they must be lowercase
+    DNS labels. A display name such as "Getting Started Todo App" compiles as
+    Bicep but is rejected at deploy time.
+    """
+
+    slug = "-".join(re.findall(r"[A-Za-z0-9]+", value)).lower()
+    if not slug:
+        raise ValueError(f"cannot derive a resource name from {value!r}")
+    if slug[0].isdigit():
+        slug = "r-" + slug
+    return slug[:63].rstrip("-")
+
+
+def interpolation(parts: list[Any]) -> Expression:
+    """Compose a Bicep string-interpolation expression from literals and refs."""
+
+    body = ""
+    for part in parts:
+        if isinstance(part, Expression):
+            body += "${" + part.text + "}"
+        else:
+            text = str(part)
+            body += text.replace("\\", "\\\\").replace("${", "\\${").replace("'", "\\'")
+    return Expression("'" + body + "'")
+
+
 def pascal(value: str) -> str:
     return "".join(word.capitalize() for word in re.findall(r"[A-Za-z0-9]+", value))
 
@@ -163,6 +196,26 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
                 "runtime-writable directory"
             )
 
+    if model["status"] == "complete" and not model["dependencies"]:
+        # Selecting no backing service is a real answer, but it is the rare one:
+        # most applications exist to read, write, serve or process data held
+        # somewhere else. Requiring a cited disposition stops "none" from being
+        # the silent default when the source supports several backends.
+        disposition = model.get("selfContained")
+        if not disposition:
+            offered = sorted(
+                kind
+                for kind, qualified in DEPENDENCY_TYPES.items()
+                if qualified in {n.split("@", 1)[0] for n in contract["resourceTypes"]}
+            )
+            errors.append(
+                "$.selfContained: no backing service was selected. The pinned "
+                "contract offers " + ", ".join(offered) + ". Either select the "
+                "service this application requires to perform its primary "
+                "function, or record $.selfContained with a primaryFunction, a "
+                "rationale and a path:line citation proving it needs none."
+            )
+
     available_types = {
         name.split("@", 1)[0] for name in contract["resourceTypes"]
     }
@@ -244,7 +297,11 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
                 .get("runtimeUri", {})
                 .get("schemes", [])
             )
-            if connection_uri.get("scheme") not in schemes:
+            # Only types whose contract declares a URI grammar can have their
+            # scheme checked. Types that hand out a ready-made connection string
+            # have no scheme list, and comparing against an empty one would
+            # reject every model for those types.
+            if schemes and connection_uri.get("scheme") not in schemes:
                 errors.append(
                     f"$.dependencies[{index}].settings: connectionUri scheme "
                     f"must be one of {schemes!r}"
@@ -348,6 +405,36 @@ def plan_document(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def default_input(dependency: dict[str, Any], name: str) -> str:
+    """Derive a deployable default for a name the definition has to invent.
+
+    Preference order: the schema default published by the pinned contract, then
+    a slug derived from the dependency itself. Nothing here is specific to any
+    application, so a repository never seen before gets the same treatment.
+    """
+
+    contract = json.loads(CONTRACT_PATH.read_text())
+    qualified = DEPENDENCY_TYPES[dependency["kind"]]
+    binding = (
+        contract["protocolProfiles"].get(qualified, {}).get("binding", {})
+    )
+    slot = next(
+        (key[: -len("Input")] for key, value in binding.items()
+         if key.endswith("Input") and value == name),
+        name,
+    )
+    for qualified_name, body in contract["resourceTypes"].items():
+        if qualified_name.split("@", 1)[0] != qualified:
+            continue
+        definition = (body.get("schema") or {}).get("properties", {}).get(slot)
+        if isinstance(definition, dict) and "default" in definition:
+            return str(definition["default"])
+        break
+    # Underscore, not hyphen: an unquoted SQL identifier accepts one and
+    # rejects the other, and this value can land in a database name.
+    return (slug(dependency["id"]) + "_" + slug(slot)).replace("-", "_")
+
+
 def input_expression(
     dependency: dict[str, Any],
     name: str,
@@ -358,11 +445,16 @@ def input_expression(
         raise ValueError(f"{dependency['id']}: missing input {name!r}")
     if item["value"]["kind"] == "literal":
         return item["value"]["value"]
+    secure = bool(SECRET_NAME.search(name) or name == "password")
     parameter = identifier(dependency["id"]) + pascal(name)
-    parameters.setdefault(
-        parameter,
-        {"secure": bool(SECRET_NAME.search(name) or name == "password")},
-    )
+    spec: dict[str, Any] = {"secure": secure}
+    if not secure:
+        # A non-secret name the definition has to invent (a database, an admin
+        # user) still has to have *some* value, or the file cannot be deployed
+        # without out-of-band input. Give it a default so it is deployable as
+        # written and still overridable. Only a credential is left unset.
+        spec["default"] = default_input(dependency, name)
+    parameters.setdefault(parameter, spec)
     return Expression(parameter)
 
 
@@ -450,6 +542,8 @@ def resolve(
     remote: str,
     commit: str,
     source_path: str,
+    expose_externally: bool = False,
+    persist_data: bool = False,
 ) -> dict[str, Any]:
     available = {
         name.split("@", 1)[0]: name for name in contract["resourceTypes"]
@@ -469,7 +563,7 @@ def resolve(
             "symbol": app_symbol,
             "type": available["Radius.Core/applications"],
             "body": {
-                "name": model["application"]["name"],
+                "name": resource_name(model["application"]["name"]),
                 "properties": {"environment": Expression("environment")},
             },
         }
@@ -499,6 +593,16 @@ def resolve(
             properties[property_name] = input_expression(
                 dependency, item["name"], parameters
             )
+        for property_name, definition in schema_properties.items():
+            # A writable property carrying a schema default is part of the
+            # resource's declared shape. Materialize it so the coordinate the
+            # application connects to is stated in the file rather than left
+            # to whatever the Recipe happens to pick.
+            if property_name in properties or definition.get("readOnly"):
+                continue
+            if "default" not in definition:
+                continue
+            properties[property_name] = definition["default"]
         resources.append(
             {
                 "symbol": symbol,
@@ -527,21 +631,25 @@ def resolve(
             image_symbol = workload_symbol + "Image"
             context = image["context"].strip("/")
             app_path = "" if source_path in {"", "."} else source_path.strip("/") + "/"
-            build_path = app_path + context
+            build_path = (app_path + context).strip("/")
+            if build_path == ".":
+                build_path = ""
             source = remote.rstrip("/")
             if source.endswith(".git"):
                 source = source[:-4]
             build_source = f"git::{source}.git//{build_path}?ref={commit}"
-            build: dict[str, Any] = {
-                "source": build_source,
-                "dockerfile": image["dockerfile"],
-            }
+            build: dict[str, Any] = {"source": build_source}
+            # The builder already defaults to a Dockerfile at the context root,
+            # so naming it only adds a path that has to stay correct.
+            dockerfile = (image["dockerfile"] or "").strip("/")
+            if dockerfile and dockerfile != "Dockerfile":
+                build["dockerfile"] = dockerfile
             resources.append(
                 {
                     "symbol": image_symbol,
                     "type": available["Radius.Compute/containerImages"],
                     "body": {
-                        "name": workload["name"] + "-image",
+                        "name": resource_name(workload["name"]) + "-image",
                         "properties": {
                             "environment": Expression("environment"),
                             "application": Expression("app.id"),
@@ -568,9 +676,11 @@ def resolve(
             if not setting["sensitive"]:
                 env[setting["name"]] = {"value": Expression(parameter)}
                 continue
-            secret_key = workload_symbol + "_" + setting["name"]
-            secret_entries[secret_key] = {"value": Expression(parameter)}
-            secret_env_keys[(workload["id"], setting["name"])] = secret_key
+            # A developer-supplied credential is already protected by the
+            # @secure() parameter: Radius encrypts it and injects it. Copying it
+            # into an application-owned secret resource adds a second copy
+            # without adding protection.
+            env[setting["name"]] = {"value": Expression(parameter)}
             requirements["secretEnvironment"].append({"key": setting["name"]})
 
         runtime_wrappers: list[str] = []
@@ -591,15 +701,8 @@ def resolve(
             ):
                 uri = settings_by_slot["connectionUri"]
                 uri_key = uri["delivery"]["name"]
-                helpers = {
-                    component: (
-                        f"RADIUS_{symbol.upper()}_{component.upper()}"
-                    )
-                    for component in ("host", "username", "password", "database")
-                }
-                component_ledger: list[dict[str, Any]] = []
-                for component in ("host", "username", "password", "database"):
-                    value_kind, value, _ = setting_value(
+                components = {
+                    component: setting_value(
                         dependency=dependency,
                         slot=component,
                         symbol=symbol,
@@ -607,96 +710,152 @@ def resolve(
                         contract=contract,
                         parameters=parameters,
                     )
-                    key = helpers[component]
-                    if value_kind == "secret":
-                        secret_key = workload_symbol + "_" + key
-                        secret_entries[secret_key] = {"value": value}
-                        env[key] = {
-                            "valueFrom": {
-                                "secretKeyRef": {
-                                    "secretName": Expression(
-                                        "applicationSecrets.name"
-                                    ),
-                                    "key": secret_key,
-                                }
-                            }
-                        }
-                        requirements["secretEnvironment"].append({"key": key})
-                        delivery = {
-                            "kind": "secretKeyRef",
-                            "key": key,
-                            "secretKey": secret_key,
-                        }
-                    else:
-                        env[key] = {"value": value}
-                        delivery = {"kind": "env", "key": key}
-                    component_ledger.append(
-                        {
-                            "name": component,
-                            "evidence": uri["citation"],
-                            "delivery": delivery,
-                        }
-                    )
-                port = (
-                    contract["protocolProfiles"][qualified_type]["binding"][
-                        "portLiteral"
-                    ]
-                )
-                shell_encoder = (
-                    "urlencode() { input=$1; output=''; LC_ALL=C; "
-                    "while [ -n \"$input\" ]; do "
-                    "char=${input%\"${input#?}\"}; input=${input#?}; "
-                    "case \"$char\" in [a-zA-Z0-9.~_-]) "
-                    "output=\"${output}${char}\" ;; *) "
-                    "code=$(printf '%d' \"'$char\"); "
-                    "hex=$(printf '%02X' \"$((code & 255))\"); "
-                    "output=\"${output}%${hex}\" ;; esac; done; "
-                    "printf '%s' \"$output\"; }; "
-                    f'RADIUS_URI_USERNAME=$(urlencode "${helpers["username"]}"); '
-                    f'RADIUS_URI_PASSWORD=$(urlencode "${helpers["password"]}"); '
-                    f'RADIUS_URI_DATABASE=$(urlencode "${helpers["database"]}"); '
-                    f'export {uri_key}="{uri["scheme"]}://'
-                    f'${{RADIUS_URI_USERNAME}}:${{RADIUS_URI_PASSWORD}}@'
-                    f'${{{helpers["host"]}}}:{port}/'
-                    '${RADIUS_URI_DATABASE}?sslmode=require"'
-                )
-                runtime_wrappers.append(shell_encoder)
-                ledger.extend(
-                    component_ledger
-                    + [
-                        {
-                            "name": "port",
-                            "evidence": uri["citation"],
-                            "delivery": {
-                                "kind": "runtimeConfig",
-                                "key": uri_key,
-                                "value": port,
-                            },
-                        },
-                        {
-                            "name": "sslmode",
-                            "evidence": uri["citation"],
-                            "delivery": {
-                                "kind": "runtimeConfig",
-                                "key": uri_key,
-                                "value": "require",
-                            },
-                        },
+                    for component in ("host", "username", "password", "database")
+                }
+                port_literal = contract["protocolProfiles"][qualified_type][
+                    "binding"
+                ]["portLiteral"]
+                if not any(kind == "managedSecret" for kind, _, _ in components.values()):
+                    # Every component is a value this definition supplies, so it
+                    # is known at compile time and known to be URI-safe. Compose
+                    # the URI directly instead of shipping a shell encoder that
+                    # would also force a wrapper onto an imageDefault process.
+                    env[uri_key] = {
+                        "value": interpolation(
+                            [
+                                uri["scheme"] + "://",
+                                components["username"][1],
+                                ":",
+                                components["password"][1],
+                                "@",
+                                components["host"][1],
+                                ":" + str(port_literal) + "/",
+                                components["database"][1],
+                                "?sslmode=require",
+                            ]
+                        )
+                    }
+                    ledger.append(
                         {
                             "name": "connectionUri",
                             "evidence": uri["citation"],
-                            "delivery": {
-                                "kind": "runtimeConfig",
-                                "key": uri_key,
-                                "value": f"{uri['scheme']}://",
+                            "delivery": {"kind": "env", "key": uri_key},
+                        }
+                    )
+                    skipped_slots.add("connectionUri")
+                    for component in ("host", "username", "password", "database"):
+                        skipped_slots.add(component)
+                    continue_direct = True
+                else:
+                    continue_direct = False
+                if not continue_direct:
+                    helpers = {
+                        component: (
+                            f"RADIUS_{symbol.upper()}_{component.upper()}"
+                        )
+                        for component in ("host", "username", "password", "database")
+                    }
+                    component_ledger: list[dict[str, Any]] = []
+                    for component in ("host", "username", "password", "database"):
+                        value_kind, value, _ = setting_value(
+                            dependency=dependency,
+                            slot=component,
+                            symbol=symbol,
+                            qualified_type=qualified_type,
+                            contract=contract,
+                            parameters=parameters,
+                        )
+                        key = helpers[component]
+                        if value_kind == "secret":
+                            secret_key = workload_symbol + "_" + key
+                            secret_entries[secret_key] = {"value": value}
+                            env[key] = {
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "secretName": Expression(
+                                            "applicationSecrets.name"
+                                        ),
+                                        "key": secret_key,
+                                    }
+                                }
+                            }
+                            requirements["secretEnvironment"].append({"key": key})
+                            delivery = {
+                                "kind": "secretKeyRef",
+                                "key": key,
+                                "secretKey": secret_key,
+                            }
+                        else:
+                            env[key] = {"value": value}
+                            delivery = {"kind": "env", "key": key}
+                        component_ledger.append(
+                            {
+                                "name": component,
+                                "evidence": uri["citation"],
+                                "delivery": delivery,
+                            }
+                        )
+                    port = (
+                        contract["protocolProfiles"][qualified_type]["binding"][
+                            "portLiteral"
+                        ]
+                    )
+                    shell_encoder = (
+                        "urlencode() { input=$1; output=''; LC_ALL=C; "
+                        "while [ -n \"$input\" ]; do "
+                        "char=${input%\"${input#?}\"}; input=${input#?}; "
+                        "case \"$char\" in [a-zA-Z0-9.~_-]) "
+                        "output=\"${output}${char}\" ;; *) "
+                        "code=$(printf '%d' \"'$char\"); "
+                        "hex=$(printf '%02X' \"$((code & 255))\"); "
+                        "output=\"${output}%${hex}\" ;; esac; done; "
+                        "printf '%s' \"$output\"; }; "
+                        f'RADIUS_URI_USERNAME=$(urlencode "${helpers["username"]}"); '
+                        f'RADIUS_URI_PASSWORD=$(urlencode "${helpers["password"]}"); '
+                        f'RADIUS_URI_DATABASE=$(urlencode "${helpers["database"]}"); '
+                        f'export {uri_key}="{uri["scheme"]}://'
+                        f'${{RADIUS_URI_USERNAME}}:${{RADIUS_URI_PASSWORD}}@'
+                        f'${{{helpers["host"]}}}:{port}/'
+                        '${RADIUS_URI_DATABASE}?sslmode=require"'
+                    )
+                    runtime_wrappers.append(shell_encoder)
+                    ledger.extend(
+                        component_ledger
+                        + [
+                            {
+                                "name": "port",
+                                "evidence": uri["citation"],
+                                "delivery": {
+                                    "kind": "runtimeConfig",
+                                    "key": uri_key,
+                                    "value": port,
+                                },
                             },
-                        },
-                    ]
-                )
-                skipped_slots.add("connectionUri")
+                            {
+                                "name": "sslmode",
+                                "evidence": uri["citation"],
+                                "delivery": {
+                                    "kind": "runtimeConfig",
+                                    "key": uri_key,
+                                    "value": "require",
+                                },
+                            },
+                            {
+                                "name": "connectionUri",
+                                "evidence": uri["citation"],
+                                "delivery": {
+                                    "kind": "runtimeConfig",
+                                    "key": uri_key,
+                                    "value": f"{uri['scheme']}://",
+                                },
+                            },
+                        ]
+                    )
+                    skipped_slots.add("connectionUri")
             if dependency["kind"] == "kafka":
                 composite = settings_by_slot["sasl.jaas.config"]
                 composite_key = composite["delivery"]["name"]
+                spec = contract["protocolProfiles"][qualified_type]["runtimeComposite"]
                 secret_key = f"RADIUS_{symbol.upper()}_CONNECTION_STRING"
                 env[secret_key] = {
                     "valueFrom": {
@@ -704,16 +863,22 @@ def resolve(
                             "secretName": Expression(
                                 f"{symbol}.properties.secrets.name"
                             ),
-                            "key": "connectionString",
+                            "key": spec["managedSecret"],
                         }
                     }
                 }
                 requirements["secretEnvironment"].append({"key": secret_key})
-                runtime_wrappers.append(
-                    f'export {composite_key}="org.apache.kafka.common.security.plain.'
-                    f'PlainLoginModule required username=\\"\\$ConnectionString\\" '
-                    f'password=\\"${secret_key}\\";"'
-                )
+                # The composite is pure concatenation - no component declares
+                # percentEncode - so it is delivered as a plain env value that
+                # references the secret env var. Only composites that need a
+                # transform require a shell process.
+                env[composite_key] = {
+                    "value": (
+                        spec["format"]
+                        .replace("<username>", spec["username"])
+                        .replace("<" + "password" + ">", "${" + secret_key + "}")
+                    )
+                }
                 ledger.extend(
                     [
                         {
@@ -775,21 +940,10 @@ def resolve(
                     ledger_kind = "secretKeyRef"
                     ledger_extra = {"secretKey": managed_key}
                 elif value_kind == "secret":
-                    parameter = value.text
-                    secret_key = workload_symbol + "_" + key
-                    secret_entries[secret_key] = {"value": Expression(parameter)}
-                    secret_env_keys[(workload["id"], key)] = secret_key
-                    env[key] = {
-                        "valueFrom": {
-                            "secretKeyRef": {
-                                "secretName": Expression("applicationSecrets.name"),
-                                "key": secret_key,
-                            }
-                        }
-                    }
+                    env[key] = {"value": environment_value(value)}
                     requirements["secretEnvironment"].append({"key": key})
-                    ledger_kind = "secretKeyRef"
-                    ledger_extra = {"secretKey": secret_key}
+                    ledger_kind = "parameter"
+                    ledger_extra = {}
                 else:
                     env[key] = {"value": environment_value(value)}
                     ledger_kind = (
@@ -854,7 +1008,7 @@ def resolve(
             {
                 "symbol": workload_symbol,
                 "type": available["Radius.Compute/containers"],
-                "body": {"name": workload["name"], "properties": properties},
+                "body": {"name": resource_name(workload["name"]), "properties": properties},
                 "containerName": container_name,
             }
         )
@@ -864,7 +1018,7 @@ def resolve(
             "symbol": "applicationSecrets",
             "type": available["Radius.Security/secrets"],
             "body": {
-                "name": model["application"]["name"] + "-secrets",
+                "name": resource_name(model["application"]["name"]) + "-secrets",
                 "properties": {
                     "environment": Expression("environment"),
                     "application": Expression("app.id"),
@@ -876,6 +1030,11 @@ def resolve(
         resources.insert(1, secret_resource)
 
     for index, item in enumerate(model["persistence"], start=1):
+        if not persist_data:
+            # A container writing to a path is not a durability requirement:
+            # caches, scratch space and optional config subsystems all write.
+            # Durable storage is a deployment decision, so it is opt-in.
+            continue
         workload_symbol = workload_symbols[item["workloadId"]]
         volume_symbol = workload_symbol + "Volume" + str(index)
         resources.insert(
@@ -919,6 +1078,11 @@ def resolve(
         workload_resource = next(
             item for item in resources if item["symbol"] == workload_symbol
         )
+        if not expose_externally:
+            # External exposure is a deployment decision, not a source fact: a
+            # compose port mapping or an EXPOSE line is local convenience. Emit a
+            # route only when the request explicitly asks to expose the app.
+            continue
         for listener in workload["listeners"]:
             if not listener["external"]:
                 continue
@@ -978,6 +1142,8 @@ def build_candidate(
     remote: str,
     commit: str,
     source_path: str,
+    expose_externally: bool = False,
+    persist_data: bool = False,
 ) -> dict[str, Any]:
     contract = json.loads(CONTRACT_PATH.read_text())
     errors = source_errors(model, contract)
@@ -991,6 +1157,8 @@ def build_candidate(
         remote=remote,
         commit=commit,
         source_path=source_path,
+        expose_externally=expose_externally,
+        persist_data=persist_data,
     )
     resolved = plan_document(plan)
     plan_errors = validate_json_schema(
@@ -1024,6 +1192,8 @@ def main() -> int:
     parser.add_argument("--remote", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--source-path", default=".")
+    parser.add_argument("--expose-externally", action="store_true")
+    parser.add_argument("--persist-data", action="store_true")
     args = parser.parse_args()
     model = json.loads(args.source_model.read_text())
     try:
@@ -1033,6 +1203,8 @@ def main() -> int:
             remote=args.remote,
             commit=args.commit,
             source_path=args.source_path,
+            expose_externally=args.expose_externally,
+            persist_data=args.persist_data,
         )
     except (KeyError, TypeError, ValueError) as exc:
         print(json.dumps({"valid": False, "errors": [str(exc)]}))

@@ -8,11 +8,19 @@
     },
     "citedScalar": {
       "type": "object",
-      "required": ["value", "citation"],
+      "required": [
+        "value",
+        "citation"
+      ],
       "additionalProperties": false,
       "properties": {
         "value": {
-          "type": ["string", "integer", "number", "boolean"]
+          "type": [
+            "string",
+            "integer",
+            "number",
+            "boolean"
+          ]
         },
         "citation": {
           "$ref": "#/$defs/citation"
@@ -23,20 +31,30 @@
       "oneOf": [
         {
           "type": "object",
-          "required": ["kind", "value"],
+          "required": [
+            "kind",
+            "value"
+          ],
           "additionalProperties": false,
           "properties": {
             "kind": {
               "const": "literal"
             },
             "value": {
-              "type": ["string", "integer", "number", "boolean"]
+              "type": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ]
             }
           }
         },
         {
           "type": "object",
-          "required": ["kind"],
+          "required": [
+            "kind"
+          ],
           "additionalProperties": false,
           "properties": {
             "kind": {
@@ -48,7 +66,11 @@
     },
     "runtimeSetting": {
       "type": "object",
-      "required": ["slot", "delivery", "citation"],
+      "required": [
+        "slot",
+        "delivery",
+        "citation"
+      ],
       "additionalProperties": false,
       "properties": {
         "slot": {
@@ -88,7 +110,10 @@
           "oneOf": [
             {
               "type": "object",
-              "required": ["kind", "name"],
+              "required": [
+                "kind",
+                "name"
+              ],
               "additionalProperties": false,
               "properties": {
                 "kind": {
@@ -102,7 +127,9 @@
             },
             {
               "type": "object",
-              "required": ["kind"],
+              "required": [
+                "kind"
+              ],
               "additionalProperties": false,
               "properties": {
                 "kind": {
@@ -113,7 +140,12 @@
           ]
         },
         "sourceDefault": {
-          "type": ["string", "integer", "number", "boolean"]
+          "type": [
+            "string",
+            "integer",
+            "number",
+            "boolean"
+          ]
         },
         "scheme": {
           "type": "string",
@@ -142,11 +174,17 @@
       "const": "1.0"
     },
     "status": {
-      "enum": ["complete", "blocked"]
+      "enum": [
+        "complete",
+        "blocked"
+      ]
     },
     "application": {
       "type": "object",
-      "required": ["name", "citation"],
+      "required": [
+        "name",
+        "citation"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -243,7 +281,10 @@
             "oneOf": [
               {
                 "type": "object",
-                "required": ["kind", "citation"],
+                "required": [
+                  "kind",
+                  "citation"
+                ],
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
@@ -256,7 +297,11 @@
               },
               {
                 "type": "object",
-                "required": ["kind", "argv", "citation"],
+                "required": [
+                  "kind",
+                  "argv",
+                  "citation"
+                ],
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
@@ -276,7 +321,11 @@
               },
               {
                 "type": "object",
-                "required": ["kind", "command", "citation"],
+                "required": [
+                  "kind",
+                  "command",
+                  "citation"
+                ],
                 "additionalProperties": false,
                 "properties": {
                   "kind": {
@@ -314,7 +363,10 @@
                   "type": "integer"
                 },
                 "protocol": {
-                  "enum": ["http", "tcp"]
+                  "enum": [
+                    "http",
+                    "tcp"
+                  ]
                 },
                 "external": {
                   "type": "boolean"
@@ -357,7 +409,10 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["path", "citation"],
+              "required": [
+                "path",
+                "citation"
+              ],
               "additionalProperties": false,
               "properties": {
                 "path": {
@@ -421,7 +476,11 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["name", "value", "citation"],
+              "required": [
+                "name",
+                "value",
+                "citation"
+              ],
               "additionalProperties": false,
               "properties": {
                 "name": {
@@ -471,7 +530,10 @@
             "pattern": "^/"
           },
           "delivery": {
-            "enum": ["image", "operatorInput"]
+            "enum": [
+              "image",
+              "operatorInput"
+            ]
           },
           "citation": {
             "$ref": "#/$defs/citation"
@@ -483,7 +545,11 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["workloadId", "path", "citation"],
+        "required": [
+          "workloadId",
+          "path",
+          "citation"
+        ],
         "additionalProperties": false,
         "properties": {
           "workloadId": {
@@ -504,7 +570,11 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["code", "message", "citations"],
+        "required": [
+          "code",
+          "message",
+          "citations"
+        ],
         "additionalProperties": false,
         "properties": {
           "code": {
@@ -522,6 +592,29 @@
               "$ref": "#/$defs/citation"
             }
           }
+        }
+      }
+    },
+    "selfContained": {
+      "type": "object",
+      "description": "Required only when 'dependencies' is empty. Records the cited evidence that the application performs its primary function without any external data, messaging, storage or AI service.",
+      "additionalProperties": false,
+      "required": [
+        "primaryFunction",
+        "rationale",
+        "citation"
+      ],
+      "properties": {
+        "primaryFunction": {
+          "type": "string",
+          "minLength": 10
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        },
+        "citation": {
+          "$ref": "#/$defs/citation"
         }
       }
     }

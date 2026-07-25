@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,40 @@ from model_pipeline import (
     selected_contract,
     source_errors,
 )
+
+
+EXTERNAL_EXPOSURE = re.compile(
+    r"\b(?:externally|external(?:ly)?\s+(?:expose|exposed|accessible|reachable)"
+    r"|expose\w*\s+(?:it\s+|the\s+\w+\s+)?(?:externally|publicly|to\s+the\s+internet)"
+    r"|public(?:ly)?\s+(?:expose|exposed|accessible|reachable)"
+    r"|ingress|public\s+route|external\s+route)\b",
+    re.IGNORECASE,
+)
+
+
+PERSISTENCE_REQUEST = re.compile(
+    r"\b(?:persistent\s+(?:volume|storage|disk)|durable\s+storage"
+    r"|persist\w*\s+(?:data|state|storage)|stateful\s+storage"
+    r"|data\s+persistence)\b",
+    re.IGNORECASE,
+)
+
+
+def requests_persistence(request: str) -> bool:
+    """Durable storage is opt-in, for the same reason exposure is."""
+
+    return bool(PERSISTENCE_REQUEST.search(request or ""))
+
+
+def requests_external_exposure(request: str) -> bool:
+    """External exposure is opt-in.
+
+    A compose port mapping or a Dockerfile EXPOSE line is local convenience, not
+    a production requirement, so exposure is only honoured when the request asks
+    for it in so many words.
+    """
+
+    return bool(EXTERNAL_EXPOSURE.search(request or ""))
 
 
 def exact_tags(target: Path, remote: str, commit: str) -> list[str]:
@@ -274,6 +309,8 @@ is closed with file:line evidence and blockers is empty.
             remote=remote,
             commit=commit,
             source_path=source_path,
+            expose_externally=requests_external_exposure(args.request),
+            persist_data=requests_persistence(args.request),
         )
         validation = validate_candidate(
             candidate,
