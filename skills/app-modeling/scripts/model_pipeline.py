@@ -389,7 +389,15 @@ def plan_document(plan: dict[str, Any]) -> dict[str, Any]:
     return {
         "schemaVersion": plan["schemaVersion"],
         "parameters": [
-            {"name": name, "secure": properties["secure"]}
+            {
+                "name": name,
+                "secure": properties["secure"],
+                **(
+                    {"default": properties["default"]}
+                    if "default" in properties
+                    else {}
+                ),
+            }
             for name, properties in plan["parameters"].items()
         ],
         "resources": [
@@ -661,7 +669,12 @@ def resolve(
         qualified_type = dependency_types(contract)[dependency["kind"]]
         recipe = contract["azureRecipeMappings"].get(qualified_type, {})
         name_parameter = symbol + "Name"
-        parameters[name_parameter] = {"secure": False}
+        # Named after the dependency the source declared, so the file deploys
+        # as written while staying overridable.
+        parameters[name_parameter] = {
+            "secure": False,
+            "default": slug(dependency["id"]),
+        }
         properties: dict[str, Any] = {
             "environment": Expression("environment"),
             "application": Expression("app.id"),
@@ -1201,6 +1214,12 @@ def render(plan: dict[str, Any], contract: dict[str, Any]) -> tuple[str, dict[st
     for name, properties in plan["parameters"].items():
         if properties["secure"]:
             lines.extend(["@secure()", f"param {name} string", ""])
+        elif "default" in properties:
+            # A name the definition had to invent still needs a value, or the
+            # file cannot be deployed as written.
+            lines.extend(
+                [f"param {name} string = {bicep_string(properties['default'])}", ""]
+            )
         else:
             lines.extend([f"param {name} string", ""])
     for item in plan["resources"]:
