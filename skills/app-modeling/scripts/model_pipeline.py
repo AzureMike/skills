@@ -71,6 +71,16 @@ def bicep_key(value: str) -> str:
     return value if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) else bicep_string(value)
 
 
+def environment_value(value: Any) -> Any:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return value
+
+
 def render_value(value: Any, indent: int = 0) -> str:
     prefix = " " * indent
     child = " " * (indent + 2)
@@ -549,7 +559,9 @@ def resolve(
         for setting in workload["configuration"]:
             value = setting["value"]
             if value["kind"] == "literal":
-                env[setting["name"]] = {"value": value["value"]}
+                env[setting["name"]] = {
+                    "value": environment_value(value["value"])
+                }
                 continue
             parameter = workload_symbol + pascal(setting["name"])
             parameters.setdefault(parameter, {"secure": setting["sensitive"]})
@@ -779,7 +791,7 @@ def resolve(
                     ledger_kind = "secretKeyRef"
                     ledger_extra = {"secretKey": secret_key}
                 else:
-                    env[key] = {"value": value}
+                    env[key] = {"value": environment_value(value)}
                     ledger_kind = (
                         "literal"
                         if isinstance(value, (str, int, float, bool))

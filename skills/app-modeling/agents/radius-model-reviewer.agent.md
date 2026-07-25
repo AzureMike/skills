@@ -31,6 +31,11 @@ When a complete repository manifest selects a first-class external backing
 service that the production workload supports, preserve that backing path
 instead of silently switching to an embedded fallback. Exclude unrelated
 development-only workloads individually.
+Before choosing the profile, inspect the production Dockerfile plus root-level
+Compose, Helm, deployment, and release manifests. If one complete manifest
+wires the production application client to an external backing service, select
+that path even when the bare image has an embedded fallback. Select the
+embedded fallback only when no complete manifest selects the external path.
 
 For every workload:
 
