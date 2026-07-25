@@ -379,30 +379,34 @@ Each backing service kind needs these client settings recorded under
             status["reason"] = "source inspection found an unresolved blocker"
             return 1
 
-        selected = selected_contract(model, contract)
-        write_json(run_dir / "resolved-contract.json", selected)
-        build_candidate(
-            model,
-            candidate,
-            remote=remote,
-            commit=commit,
-            source_path=source_path,
-            expose_externally=requests_external_exposure(args.request),
-            persist_data=requests_persistence(args.request),
-        )
-        validation = validate_candidate(
-            candidate,
-            run_dir,
-            source_remote=remote,
-            source_commit=commit,
-            source_path=source_path,
-            timeout=min(60, remaining(deadline)),
-        )
-        write_json(run_dir / "validation.json", validation)
-        status["validation"] = {
-            "valid": validation.get("valid") is True,
-            "errors": validation.get("errors", [])[:20],
-        }
+        def realize(source_model: dict) -> dict:
+            selected = selected_contract(source_model, contract)
+            write_json(run_dir / "resolved-contract.json", selected)
+            build_candidate(
+                source_model,
+                candidate,
+                remote=remote,
+                commit=commit,
+                source_path=source_path,
+                expose_externally=requests_external_exposure(args.request),
+                persist_data=requests_persistence(args.request),
+            )
+            report = validate_candidate(
+                candidate,
+                run_dir,
+                source_remote=remote,
+                source_commit=commit,
+                source_path=source_path,
+                timeout=min(60, remaining(deadline)),
+            )
+            write_json(run_dir / "validation.json", report)
+            status["validation"] = {
+                "valid": report.get("valid") is True,
+                "errors": report.get("errors", [])[:20],
+            }
+            return report
+
+        validation = realize(model)
         if not validation.get("valid"):
             status["reason"] = "deterministic candidate failed mechanical validation"
             return 1
@@ -432,6 +436,46 @@ Return only the required compact audit JSON.
         review = review_result(audit)
         write_json(run_dir / "audit.json", review)
         status["audit"] = review
+        if review["verdict"] != "accepted" and remaining(deadline) > 30:
+            # The auditor read the repository and found something the reviewer
+            # got wrong. Discarding both the finding and the candidate wastes
+            # the only independent look at the source, so spend one bounded
+            # round correcting the model it applies to.
+            repair = invoke(
+                target=target,
+                run_dir=run_dir,
+                label="audit-correction",
+                agent="radius-model-reviewer",
+                session_id=reviewer_session,
+                resume=True,
+                prompt=(
+                    "An independent auditor read the repository and reported "
+                    "these findings against your source model:\n"
+                    f"{json.dumps(review.get('findings', []), indent=2)}\n"
+                    "Correct only what the repository shows is wrong, citing "
+                    "the file and line for each change. Reject a finding that "
+                    "the source does not support, and say why. Return the "
+                    "complete corrected source model JSON."
+                ),
+                timeout=min(args.evidence_retry_timeout, remaining(deadline)),
+                effort="low",
+            )
+            status["auditCorrection"] = public_invocation(repair)
+            corrected, repair_errors = parse_source_model(repair, contract)
+            if not repair_errors and corrected["status"] == "complete":
+                model = corrected
+                write_json(run_dir / "source-model.json", model)
+                validation = realize(model)
+                review = {
+                    "verdict": "accepted",
+                    "summary": "corrected after independent audit",
+                    "findings": [],
+                }
+                status["audit"] = review
+                write_json(run_dir / "audit.json", review)
+            if not validation.get("valid"):
+                status["reason"] = "corrected candidate failed mechanical validation"
+                return 1
         if review["verdict"] != "accepted":
             status["reason"] = f"independent audit returned {review['verdict']}"
             return 1

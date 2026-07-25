@@ -697,6 +697,11 @@ def resolve(
             )
             if property_name not in schema_properties:
                 continue
+            # A read-only property is a Recipe output, not something the
+            # definition supplies. The application still needs the value, but
+            # it arrives through the binding rather than the resource body.
+            if schema_properties[property_name].get("readOnly"):
+                continue
             properties[property_name] = input_expression(
                 contract, dependency, item["name"], parameters
             )
