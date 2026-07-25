@@ -192,6 +192,22 @@ def reportable_slots(schema: dict) -> set[str]:
     return found
 
 
+def binding_slots(profile: dict) -> set[str]:
+    """Slots the contract can bind for this service, read off the binding keys.
+
+    Every binding key is named ``{slot}{Kind}``, so the key names are already
+    the list of settings this service can deliver.
+    """
+
+    suffixes = ("Property", "Secret", "Literal", "Transform", "Input")
+    slots = set()
+    for key in profile.get("binding") or {}:
+        suffix = next((item for item in suffixes if key.endswith(item)), None)
+        if suffix and suffix != "Input":
+            slots.add(key[: -len(suffix)])
+    return slots
+
+
 def slot_guide(contract: dict, schema: dict) -> str:
     """Describe each service's client settings straight from the contract.
 
@@ -236,12 +252,28 @@ def slot_guide(contract: dict, schema: dict) -> str:
             if composite["setting"] not in required
             and set(composite.get("satisfies", [])) & set(required)
         ]
+        # A service can also have slots the contract knows how to bind without
+        # listing them as required. Naming any other slot fails resolution, so
+        # the analyst has to be told which ones exist.
+        bindable = [
+            slot
+            for slot in sorted(binding_slots(profile))
+            if slot in reportable and slot not in required and slot not in hidden
+        ]
         if not required:
-            lines.append(f"- {kind}: no required settings")
+            if bindable:
+                lines.append(
+                    f"- {kind}: no required settings; deliver only "
+                    f"{', '.join(bindable)} if the application needs it"
+                )
+            else:
+                lines.append(f"- {kind}: no required settings")
             continue
         line = f"- {kind}: {', '.join(required)}"
         if offered:
             line += f"; or {', '.join(offered)} alone, which carries them all"
+        if bindable:
+            line += f"; optionally {', '.join(bindable)}"
         lines.append(line)
     return "\n".join(lines)
 
