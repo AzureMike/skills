@@ -1267,12 +1267,13 @@ Expected/golden application definitions are unavailable.
                 )
             else:
                 retry_prompt = (
-                    "Recheck the reported source blockers once using only the "
-                    "already inspected evidence and the exact Git tags supplied "
-                    "in the original prompt. Contract selection is not a source "
-                    "blocker. Preserve genuine packaging or runtime blockers; "
-                    "otherwise return the closed profile as one compact JSON "
-                    "object with status, facts, and blockers. Do not use tools."
+                    "Recheck only the reported source blockers once. Use tools "
+                    "when needed to inspect the exact source revision and Git "
+                    "tags supplied in the original prompt; do not broadly "
+                    "rescan. Contract selection is not a source blocker. "
+                    "Preserve genuine packaging or runtime blockers; otherwise "
+                    "return the closed profile as one compact JSON object with "
+                    "status, facts, and blockers."
                 )
             evidence_retry = invoke(
                 target=target,
@@ -1281,7 +1282,7 @@ Expected/golden application definitions are unavailable.
                 agent="radius-model-reviewer",
                 session_id=reviewer_session,
                 prompt=retry_prompt,
-                timeout=min(25, remaining(deadline)),
+                timeout=min(40, remaining(deadline)),
                 resume=True,
                 effort="low",
             )
@@ -1294,8 +1295,18 @@ Expected/golden application definitions are unavailable.
             except ValueError as exc:
                 evidence_errors = [str(exc)]
             if evidence_errors:
+                status["evidenceResult"] = {
+                    "status": evidence.get("status"),
+                    "blockers": evidence.get("blockers", [])[:8],
+                    "errors": evidence_errors,
+                }
                 status["reason"] = "; ".join(evidence_errors)
                 return 1
+        status["evidenceResult"] = {
+            "status": evidence.get("status"),
+            "blockers": evidence.get("blockers", [])[:8],
+            "errors": evidence_errors,
+        }
         write_json(run_dir / "reviewer-evidence.json", evidence)
         if evidence.get("status") in {"blocked", "needs_more_info", "conflict"}:
             status["reason"] = "independent evidence could not close the requested profile"

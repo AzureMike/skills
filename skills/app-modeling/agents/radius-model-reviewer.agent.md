@@ -117,3 +117,7 @@ contracts are insufficient for a sound verdict. Do not report your read-only
 role, a required author implementation, or a secure runtime transformation as a
 blocker. Those are review facts unless the requested behavior cannot be
 implemented by the source image or verified Radius contract.
+
+On a source-clarification follow-up before any candidate exists, inspect only
+the reported blockers. Use tools when needed, preserve closed facts, and return
+the complete source-evidence JSON again.
