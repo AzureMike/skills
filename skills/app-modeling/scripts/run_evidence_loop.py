@@ -299,7 +299,8 @@ is closed with file:line evidence and blockers is empty.
             agent="radius-model-auditor",
             session_id=str(uuid.uuid4()),
             prompt=f"""
-Independently audit the exact generated candidate against:
+Independently inspect source at {target} for request {args.request!r}, then
+audit the exact generated candidate against:
 - source model: {run_dir / 'source-model.json'}
 - selected pinned contracts: {run_dir / 'resolved-contract.json'}
 - resolved plan: {candidate / 'resolved-plan.json'}

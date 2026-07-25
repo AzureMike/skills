@@ -36,6 +36,11 @@ Compose, Helm, deployment, and release manifests. If one complete manifest
 wires the production application client to an external backing service, select
 that path even when the bare image has an embedded fallback. Select the
 embedded fallback only when no complete manifest selects the external path.
+Model dependencies required for the workload's primary production function,
+not only those required for its process to start. A UI, API, gateway, or admin
+client that can boot empty still requires one instance of the core service it
+exists to query or manage. Prefer cited direct native settings over enabling an
+optional dynamic-configuration subsystem merely to make the process start.
 
 For every workload:
 
