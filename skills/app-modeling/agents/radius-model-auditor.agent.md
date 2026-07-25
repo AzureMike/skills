@@ -40,6 +40,11 @@ configuration as a selected production profile; never accept an invented
 adapter or configuration body.
 For every contract binding key ending in `Transform`, require the candidate to
 preserve all literal text around the referenced Recipe output.
+When the candidate selects `runtimeUri`, require the source-supported setting
+and scheme, exact verified components, literal port and options,
+percent-encoding of every declared component, secure secret input, and the
+original process after export. Do not require a URI when cited discrete inputs
+express the complete tuple.
 For a shell-built composite, interpret the compiled shell rather than the
 Bicep escape spelling. An outer double-quoted assignment with `\"` around
 fields, `\$name` for a required literal dollar value, and `$SECRET_ENV` for the

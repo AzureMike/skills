@@ -403,6 +403,7 @@ def validate_requirements(template, contract, requirements, errors):
         }
         binding = profile.get("binding", {})
         runtime_composite = profile.get("runtimeComposite")
+        runtime_uri = profile.get("runtimeUri")
         for binding_name, transform in binding.items():
             if not binding_name.endswith("Transform") or not isinstance(transform, str):
                 continue
@@ -584,6 +585,111 @@ def validate_requirements(template, contract, requirements, errors):
                     path,
                     f"Expected {key}={expected!r}, got {actual.get('value')!r}.",
                 )
+
+        if isinstance(runtime_uri, dict):
+            uri_format = runtime_uri.get("format")
+            components = runtime_uri.get("components", [])
+            encoded_components = runtime_uri.get("percentEncode", [])
+            suffixes = runtime_uri.get("settingSuffixes", [])
+            allowed_schemes = runtime_uri.get("schemes", [])
+            runtime_keys = {
+                delivery.get("key")
+                for setting in settings.values()
+                for delivery in [setting.get("delivery")]
+                if isinstance(delivery, dict)
+                and delivery.get("kind") == "runtimeConfig"
+                and isinstance(delivery.get("key"), str)
+                and any(
+                    delivery["key"].endswith(suffix)
+                    for suffix in suffixes
+                    if isinstance(suffix, str)
+                )
+            }
+            uses_runtime_uri = bool(runtime_keys) or any(
+                f"{scheme}://" in command_text
+                for scheme in allowed_schemes
+                if isinstance(scheme, str)
+            )
+            if not uses_runtime_uri:
+                continue
+            if len(runtime_keys) != 1:
+                error(
+                    errors,
+                    "REQUIREMENT_RUNTIME_URI_SETTING",
+                    f"$.requirements.dependencies.{symbol}.runtimeUri",
+                    "Runtime URI must use one source-supported URI setting.",
+                )
+            else:
+                runtime_key = next(iter(runtime_keys))
+                if not re.search(
+                    rf"\bexport\s+{re.escape(runtime_key)}\s*=",
+                    command_text,
+                ):
+                    error(
+                        errors,
+                        "REQUIREMENT_RUNTIME_URI_SETTING",
+                        f"$.requirements.dependencies.{symbol}.runtimeUri",
+                        f"Runtime command must export {runtime_key}.",
+                    )
+            if not any(
+                f"{scheme}://" in command_text
+                for scheme in allowed_schemes
+                if isinstance(scheme, str)
+            ):
+                error(
+                    errors,
+                    "REQUIREMENT_RUNTIME_URI_SCHEME",
+                    f"$.requirements.dependencies.{symbol}.runtimeUri",
+                    "Runtime URI must use a source-supported verified scheme.",
+                )
+            if isinstance(uri_format, str):
+                literal_parts = [
+                    part
+                    for part in re.split(
+                        r"<[A-Za-z][A-Za-z0-9]*>",
+                        uri_format,
+                    )
+                    if part
+                ]
+                if not all(part in command_text for part in literal_parts):
+                    error(
+                        errors,
+                        "REQUIREMENT_RUNTIME_URI_FORMAT",
+                        f"$.requirements.dependencies.{symbol}.runtimeUri",
+                        "Runtime URI must preserve the verified format "
+                        f"{uri_format!r}.",
+                    )
+            component_settings = {
+                component: normalized_settings.get(component)
+                for component in components
+                if isinstance(component, str)
+            }
+            for component in encoded_components:
+                setting = component_settings.get(component)
+                delivery = (
+                    setting.get("delivery")
+                    if isinstance(setting, dict)
+                    else None
+                )
+                key = delivery.get("key") if isinstance(delivery, dict) else None
+                if (
+                    not isinstance(key, str)
+                    or not re.search(
+                        rf"\$(?:\{{{re.escape(key)}\}}|{re.escape(key)}\b)",
+                        command_text,
+                    )
+                    or not (
+                        "urllib.parse import quote" in command_text
+                        and 'safe=""' in command_text
+                    )
+                ):
+                    error(
+                        errors,
+                        "REQUIREMENT_RUNTIME_URI_ENCODING",
+                        f"$.requirements.dependencies.{symbol}.settings.{component}",
+                        f"Runtime URI component {component!r} must be "
+                        "percent-encoded from its native environment input.",
+                    )
 
         if isinstance(runtime_composite, dict):
             composite_format = runtime_composite.get("format")

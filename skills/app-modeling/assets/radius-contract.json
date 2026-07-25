@@ -1559,7 +1559,36 @@
         "username",
         "password",
         "sslmode=require"
-      ]
+      ],
+      "runtimeUri": {
+        "components": [
+          "username",
+          "password",
+          "host",
+          "port",
+          "database"
+        ],
+        "format": "<scheme>://<username>:<password>@<host>:<port>/<database>?sslmode=require",
+        "schemes": [
+          "postgres",
+          "postgresql"
+        ],
+        "percentEncode": [
+          "username",
+          "password",
+          "database"
+        ],
+        "settingSuffixes": [
+          "URL",
+          "URI",
+          "DSN",
+          "CONNECTION_STRING"
+        ],
+        "sources": [
+          "https://www.postgresql.org/docs/current/libpq-connect.html",
+          "https://learn.microsoft.com/azure/postgresql/security/security-tls-how-to-connect"
+        ]
+      }
     },
     "Radius.Data/sqlServerDatabases": {
       "binding": {

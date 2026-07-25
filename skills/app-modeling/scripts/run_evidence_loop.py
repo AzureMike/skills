@@ -2490,6 +2490,34 @@ def secret_key_ref_environment_keys(source: str) -> set[str]:
     return keys
 
 
+def container_environment_keys(source: str) -> set[str]:
+    lines = source.splitlines()
+    keys: set[str] = set()
+    for env_index, line in enumerate(lines):
+        match = re.match(r"^(\s*)env\s*:\s*\{\s*$", line)
+        if not match:
+            continue
+        key_indent = match.group(1) + "  "
+        depth = 0
+        env_end = None
+        for index in range(env_index, len(lines)):
+            depth += lines[index].count("{") - lines[index].count("}")
+            if index > env_index and depth == 0:
+                env_end = index
+                break
+        if env_end is None:
+            continue
+        for line in lines[env_index + 1 : env_end]:
+            key_match = re.match(
+                rf"^{re.escape(key_indent)}(?:'([^']+)'|\"([^\"]+)\"|"
+                r"([A-Za-z_][A-Za-z0-9_]*))\s*:\s*\{\s*$",
+                line,
+            )
+            if key_match:
+                keys.add(next(item for item in key_match.groups() if item))
+    return keys
+
+
 def substitute_process_path(
     process: str,
     source_path: str,
@@ -2746,6 +2774,308 @@ def reconcile_stale_secret_composite_env(
         {"runtimeKey": runtime_key, "secretEnvironment": secret_key}
         for _, _, runtime_key, secret_key in removals
     ]
+
+
+def selected_dependency_fact(
+    evidence: dict[str, Any],
+    client_kind: str,
+) -> dict[str, Any] | None:
+    facts = evidence.get("facts")
+    dependencies = facts.get("dependencies", []) if isinstance(facts, dict) else []
+    if isinstance(dependencies, dict):
+        dependencies = [dependencies]
+    matching = [
+        item
+        for item in dependencies
+        if isinstance(item, dict)
+        and str(item.get("kind", "")).strip().lower() == client_kind.lower()
+    ]
+    return matching[0] if len(matching) == 1 else None
+
+
+def source_runtime_python(
+    evidence: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> tuple[str, str] | None:
+    facts = evidence.get("facts")
+    workloads = facts.get("workloads", []) if isinstance(facts, dict) else []
+    if isinstance(workloads, dict):
+        workloads = [workloads]
+    eligible = [item for item in workloads if isinstance(item, dict)]
+    if len(eligible) != 1:
+        return None
+    workload = eligible[0]
+    name = str(
+        workload.get(
+            "name",
+            workload.get("workload", workload.get("service", "")),
+        )
+    )
+    dockerfiles = startup_dockerfiles(
+        evidence,
+        {
+            "workload": name,
+            "citation": workload.get("citations", []),
+        },
+        source_root=source_root,
+        source_path=source_path,
+    )
+    if len(dockerfiles) != 1:
+        return None
+    dockerfile = dockerfiles[0]
+    logical_source = re.sub(
+        r"\\\r?\n\s*",
+        " ",
+        dockerfile.read_text(errors="replace"),
+    )
+    from_lines = list(
+        re.finditer(
+            r"(?im)^\s*FROM\s+(?:(?:--\S+)\s+)*\S+.*$",
+            logical_source,
+        )
+    )
+    if not from_lines:
+        return None
+    final_stage = logical_source[from_lines[-1].start() :]
+    install = re.search(
+        r"(?im)^\s*RUN\s+.*\b(?:apk\s+add|apt(?:-get)?\s+install|"
+        r"dnf\s+install|yum\s+install)\b[^\n]{0,1200}\b(python3|python)\b",
+        final_stage,
+    )
+    if not install:
+        return None
+    try:
+        relative = dockerfile.resolve().relative_to(source_root.resolve())
+    except ValueError:
+        return None
+    return install.group(1), relative.as_posix()
+
+
+def reconcile_runtime_uris(
+    candidate: Path,
+    authoring_contract: dict[str, Any],
+    evidence: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> list[dict[str, Any]]:
+    requirements_path = candidate / "requirements.json"
+    app_path = candidate / "app.bicep"
+    requirements = json.loads(requirements_path.read_text())
+    source = app_path.read_text()
+    resource_types = {
+        symbol: resource_type.split("@", 1)[0]
+        for symbol, resource_type in re.findall(
+            r"\bresource\s+([A-Za-z_][A-Za-z0-9_]*)\s+'([^']+)'",
+            source,
+        )
+    }
+    python_runtime = source_runtime_python(
+        evidence,
+        source_root=source_root,
+        source_path=source_path,
+    )
+    if python_runtime is None:
+        return []
+    python_binary, dockerfile = python_runtime
+    environment_keys = container_environment_keys(source)
+    secret_keys = secret_key_ref_environment_keys(source)
+    process = evidence_process(evidence)
+    if not process:
+        return []
+
+    changes: list[dict[str, Any]] = []
+    for dependency in requirements.get("dependencies", []):
+        if not isinstance(dependency, dict):
+            continue
+        symbol = dependency.get("resourceSymbol")
+        qualified_type = resource_types.get(symbol)
+        protocol = (
+            authoring_contract.get("bundles", {})
+            .get(qualified_type, {})
+            .get("protocol")
+            or {}
+        )
+        runtime_uri = protocol.get("runtimeUri")
+        if not isinstance(runtime_uri, dict):
+            continue
+        client_kind = runtime_uri.get("clientKind", protocol.get("clientKind"))
+        if not isinstance(client_kind, str):
+            continue
+        source_dependency = selected_dependency_fact(evidence, client_kind)
+        if source_dependency is None:
+            continue
+        components = runtime_uri.get("components")
+        template = runtime_uri.get("format")
+        encoded_components = runtime_uri.get("percentEncode", [])
+        suffixes = runtime_uri.get("settingSuffixes", [])
+        allowed_schemes = runtime_uri.get("schemes", [])
+        if (
+            not isinstance(components, list)
+            or not components
+            or not all(isinstance(item, str) and item for item in components)
+            or not isinstance(template, str)
+            or not template
+            or not isinstance(encoded_components, list)
+            or not all(item in components for item in encoded_components)
+            or not isinstance(suffixes, list)
+            or not all(isinstance(item, str) and item for item in suffixes)
+            or not isinstance(allowed_schemes, list)
+            or not all(
+                isinstance(item, str) and item for item in allowed_schemes
+            )
+        ):
+            continue
+        placeholders = re.findall(r"<([A-Za-z][A-Za-z0-9]*)>", template)
+        if [item for item in placeholders if item != "scheme"] != components:
+            continue
+
+        settings = {
+            str(item.get("name", "")).partition("=")[0]: item
+            for item in dependency.get("settings", [])
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        source_text = json.dumps(source_dependency, sort_keys=True)
+        source_keys = {
+            key
+            for key in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", source_text)
+            if any(key.endswith(suffix) for suffix in suffixes)
+        }
+        ledger_keys = {
+            delivery["key"]
+            for setting in settings.values()
+            for delivery in [setting.get("delivery")]
+            if isinstance(delivery, dict)
+            and delivery.get("kind") == "runtimeConfig"
+            and isinstance(delivery.get("key"), str)
+            and any(delivery["key"].endswith(suffix) for suffix in suffixes)
+        }
+        candidates = ledger_keys & source_keys
+        if not candidates and len(source_keys) == 1:
+            candidates = source_keys
+        if len(candidates) != 1:
+            continue
+        composite_key = next(iter(candidates))
+        uri_fact = source_dependency.get("runtimeUri")
+        declared_scheme = (
+            uri_fact.get("scheme") if isinstance(uri_fact, dict) else None
+        )
+        if declared_scheme in allowed_schemes:
+            source_schemes = {declared_scheme}
+        else:
+            source_schemes = {
+                scheme
+                for scheme in re.findall(
+                    r"\b([A-Za-z][A-Za-z0-9+.-]*)://",
+                    source_text,
+                )
+                if scheme in allowed_schemes
+            }
+        if len(source_schemes) != 1:
+            continue
+        scheme = next(iter(source_schemes))
+        if scheme not in allowed_schemes:
+            continue
+        if re.search(
+            rf"\bexport\s+{re.escape(composite_key)}\s*=",
+            source,
+        ):
+            continue
+
+        arguments: list[str] = []
+        secret_key = None
+        component_keys: dict[str, str] = {}
+        binding = protocol.get("binding") or {}
+        for component in components:
+            if component == "port":
+                port = binding.get("portLiteral", binding.get("port"))
+                if port is None:
+                    arguments = []
+                    break
+                arguments.append(shlex.quote(str(port)))
+                continue
+            setting = settings.get(component)
+            delivery = setting.get("delivery") if isinstance(setting, dict) else None
+            key = delivery.get("key") if isinstance(delivery, dict) else None
+            if not isinstance(key, str) or key not in environment_keys:
+                arguments = []
+                break
+            if component == "password":
+                if delivery.get("kind") != "secretKeyRef" or key not in secret_keys:
+                    arguments = []
+                    break
+                secret_key = key
+            component_keys[component] = key
+            arguments.append(f'"${key}"')
+        if len(arguments) != len(components) or secret_key is None:
+            continue
+
+        python_template = template.replace("<scheme>", scheme)
+        for index, component in enumerate(components):
+            python_template = python_template.replace(
+                f"<{component}>",
+                "{" + str(index) + "}",
+            )
+        encoded_indexes = tuple(
+            index
+            for index, component in enumerate(components)
+            if component in encoded_components
+        )
+        python_code = (
+            "import sys; from urllib.parse import quote; "
+            "values=sys.argv[1:]; "
+            f"encoded=[quote(value, safe=\"\") if index in "
+            f"{encoded_indexes!r} else value for index, value in enumerate(values)]; "
+            f"print({python_template!r}.format(*encoded))"
+        )
+        existing = candidate_runtime_command(source, secret_key)
+        base_command = (
+            existing
+            if existing and process in existing
+            else f"exec {process}"
+        )
+        command = (
+            f'export {composite_key}="$({python_binary} -c '
+            f"{shlex.quote(python_code)} {' '.join(arguments)})\"; "
+            f"{base_command}"
+        )
+        rewritten = insert_runtime_command(
+            source,
+            composite_key=composite_key,
+            secret_key=secret_key,
+            command=command,
+        )
+        if rewritten is None:
+            continue
+        source = rewritten
+        for requirement in protocol.get("requiredClientSettings", []):
+            name, separator, value = str(requirement).partition("=")
+            if not separator or name in components:
+                continue
+            setting = settings.get(name)
+            if not isinstance(setting, dict):
+                continue
+            setting["delivery"] = {
+                "kind": "runtimeConfig",
+                "key": composite_key,
+                "value": requirement,
+            }
+        changes.append(
+            {
+                "resourceSymbol": str(symbol),
+                "setting": composite_key,
+                "format": template,
+                "encoder": python_binary,
+                "encoderSource": dockerfile,
+                "componentKeys": component_keys,
+            }
+        )
+    if changes:
+        app_path.write_text(source)
+        write_json(requirements_path, requirements)
+    return changes
 
 
 def reconcile_exported_runtime_settings(
@@ -3335,6 +3665,7 @@ Expected/golden application definitions are unavailable.
                 "sourceDefaultChanges": [],
                 "connectionShapeChanges": [],
                 "runtimeCompositeChanges": [],
+                "runtimeUriChanges": [],
                 "startupFileChanges": [],
                 "exportedRuntimeChanges": [],
                 "secretCompositeEnvChanges": [],
@@ -3369,6 +3700,13 @@ Expected/golden application definitions are unavailable.
                     authoring_contract,
                     evidence,
                 )
+            )
+            reconciliation["runtimeUriChanges"] = reconcile_runtime_uris(
+                candidate,
+                authoring_contract,
+                evidence,
+                source_root=repository_root,
+                source_path=source_path,
             )
             reconciliation["startupFileChanges"] = (
                 reconcile_operator_startup_files(candidate, evidence)
@@ -3485,6 +3823,13 @@ candidate files.
                     authoring_contract,
                     evidence,
                 )
+            )
+            reconciliation["runtimeUriChanges"] = reconcile_runtime_uris(
+                candidate,
+                authoring_contract,
+                evidence,
+                source_root=repository_root,
+                source_path=source_path,
             )
             reconciliation["startupFileChanges"] = (
                 reconcile_operator_startup_files(candidate, evidence)

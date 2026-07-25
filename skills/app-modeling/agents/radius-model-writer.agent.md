@@ -136,6 +136,12 @@ non-native helper environment key, construct the exact native setting at
 runtime with `/bin/sh -c`, and `exec` the cited original process. Preserve a
 literal `$ConnectionString` as `\$ConnectionString` in the compiled shell
 command. Never deliver the raw managed secret under the native composite key.
+Use `runtimeUri` only when the source facts and requirements select a native URI
+setting. Prefer cited discrete inputs when they express the complete protocol
+tuple without exposing a secret in process arguments. For a selected URI,
+export it before exec using the source-native scheme and verified components.
+Percent-encode every declared component with an encoder proven present in the
+selected runtime image; keep secret components in `secretKeyRef` inputs.
 
 Every backing dependency needs complete app-native configuration plus a Radius
 connection. Set `disableDefaultEnvVars: true` unless source consumes the exact

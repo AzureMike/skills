@@ -89,6 +89,11 @@ development manifest's plaintext or unauthenticated server is an implementation
 example, not an immutable production requirement when the same client accepts
 cited secure settings. Do not reject supported TLS or authentication profiles
 merely because the simplest source example leaves them unset.
+When the selected client consumes a URI or DSN, also record
+`runtimeUri: {"setting":"...","scheme":"...","citation":"..."}` using the
+source-native setting and scheme. Keep discrete source-supported fields in
+`supportedOverrides`; a URI capability does not make it the selected delivery
+shape.
 
 Select the workload packaging and its dependency profile independently, then
 prove they are compatible at the same revision. Use the production
