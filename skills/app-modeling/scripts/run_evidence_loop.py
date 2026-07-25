@@ -1547,6 +1547,14 @@ and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
         if remaining(deadline) <= 0:
             status["reason"] = "internal deadline exceeded"
             return 1
+        status["validation"] = {
+            "valid": validation.get("valid") is True,
+            "errors": validation.get("errors", [])[:8],
+        }
+        status["audit"] = {
+            "verdict": review.get("verdict"),
+            "summary": review.get("summary"),
+        }
         if not validation.get("valid"):
             status["reason"] = "mechanical validation rejected the candidate"
             return 1
