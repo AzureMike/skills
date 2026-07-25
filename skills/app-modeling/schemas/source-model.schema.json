@@ -130,7 +130,6 @@
     "schemaVersion",
     "status",
     "application",
-    "deploymentProfile",
     "workloads",
     "dependencies",
     "startupFiles",
@@ -140,7 +139,7 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "const": "1.1"
+      "const": "1.0"
     },
     "status": {
       "enum": ["complete", "blocked"]
@@ -156,36 +155,6 @@
         },
         "citation": {
           "$ref": "#/$defs/citation"
-        }
-      }
-    },
-    "deploymentProfile": {
-      "type": "object",
-      "required": ["mode", "dependencyIds", "citation", "rationale"],
-      "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "enum": [
-            "explicit-request",
-            "declared-deployment",
-            "managed-production",
-            "image-default"
-          ]
-        },
-        "dependencyIds": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]*$"
-          }
-        },
-        "citation": {
-          "$ref": "#/$defs/citation"
-        },
-        "rationale": {
-          "type": "string",
-          "minLength": 12
         }
       }
     },
@@ -272,6 +241,19 @@
           },
           "process": {
             "oneOf": [
+              {
+                "type": "object",
+                "required": ["kind", "citation"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "imageDefault"
+                  },
+                  "citation": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              },
               {
                 "type": "object",
                 "required": ["kind", "argv", "citation"],

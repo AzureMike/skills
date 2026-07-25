@@ -144,20 +144,6 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
     if len(dependency_ids) != len(set(dependency_ids)):
         errors.append("$.dependencies: dependency ids must be unique")
     workload_set = set(workload_ids)
-    profile_dependency_ids = model["deploymentProfile"]["dependencyIds"]
-    if set(profile_dependency_ids) != set(dependency_ids):
-        errors.append(
-            "$.deploymentProfile.dependencyIds: must exactly match modeled "
-            "dependency ids"
-        )
-    if (
-        model["deploymentProfile"]["mode"] == "managed-production"
-        and not dependency_ids
-    ):
-        errors.append(
-            "$.deploymentProfile.mode: managed-production requires at least "
-            "one modeled dependency"
-        )
 
     writable = {
         workload["id"]: [item["path"] for item in workload["writablePaths"]]
@@ -297,35 +283,6 @@ def selected_contract(
         "Radius.Compute/containers",
         "Radius.Security/secrets",
     }
-    if any(item["image"]["kind"] == "build" for item in model["workloads"]):
-        selected.add("Radius.Compute/containerImages")
-    if model["persistence"]:
-        selected.add("Radius.Compute/persistentVolumes")
-    if any(
-        listener["external"]
-        for workload in model["workloads"]
-        for listener in workload["listeners"]
-    ):
-        selected.add("Radius.Compute/routes")
-    selected.update(
-        DEPENDENCY_TYPES[item["kind"]] for item in model["dependencies"]
-    )
-    available = {
-        name.split("@", 1)[0]: name for name in contract["resourceTypes"]
-    }
-    return {
-        "schemaVersion": contract["schemaVersion"],
-        "extension": contract["extension"],
-        "policies": contract["policies"],
-        "bundles": {
-            qualified_type: {
-                "type": contract["resourceTypes"][available[qualified_type]],
-                "recipe": contract["azureRecipeMappings"].get(qualified_type),
-                "protocol": contract["protocolProfiles"].get(qualified_type),
-            }
-            for qualified_type in sorted(selected)
-        },
-    }
 
 
 def plan_value(value: Any) -> dict[str, Any]:
@@ -359,6 +316,35 @@ def plan_document(plan: dict[str, Any]) -> dict[str, Any]:
             }
             for item in plan["resources"]
         ],
+    }
+    if any(item["image"]["kind"] == "build" for item in model["workloads"]):
+        selected.add("Radius.Compute/containerImages")
+    if model["persistence"]:
+        selected.add("Radius.Compute/persistentVolumes")
+    if any(
+        listener["external"]
+        for workload in model["workloads"]
+        for listener in workload["listeners"]
+    ):
+        selected.add("Radius.Compute/routes")
+    selected.update(
+        DEPENDENCY_TYPES[item["kind"]] for item in model["dependencies"]
+    )
+    available = {
+        name.split("@", 1)[0]: name for name in contract["resourceTypes"]
+    }
+    return {
+        "schemaVersion": contract["schemaVersion"],
+        "extension": contract["extension"],
+        "policies": contract["policies"],
+        "bundles": {
+            qualified_type: {
+                "type": contract["resourceTypes"][available[qualified_type]],
+                "recipe": contract["azureRecipeMappings"].get(qualified_type),
+                "protocol": contract["protocolProfiles"].get(qualified_type),
+            }
+            for qualified_type in sorted(selected)
+        },
     }
 
 
@@ -452,7 +438,9 @@ def shell_process(workload: dict[str, Any]) -> str:
         return process["command"]
     if process["kind"] == "argv":
         return shlex.join(process["argv"])
-    raise ValueError(f"{workload['id']}: unsupported source process")
+    raise ValueError(
+        f"{workload['id']}: a runtime composite requires an explicit source process"
+    )
 
 
 def resolve(

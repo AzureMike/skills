@@ -27,17 +27,15 @@ tools, live reload, tests, migrations, demo helpers, optional adapters, and
 extra clusters unless startup or the request requires them. Do not infer a
 production dependency solely from a development example; verify that the
 selected production client consumes it.
-The output is a managed production deployment. Before choosing its
-`deploymentProfile`, inspect the production Dockerfile plus root-level Compose,
-Helm, deployment, and release manifests. When source contains a runnable,
-source-native client mode for a supported external backing service, select
-`managed-production` and preserve that path instead of silently switching to
-an embedded fallback. A development manifest may prove the client wiring even
-though its proxy, admin UI, live-reload services, example credentials, and
-backing-service container are excluded from the production workload set. Use
-`image-default` only when the repository contains no supported external backing
-path needed by the selected workload. Record exactly the dependency IDs chosen
-by that profile and explain the decision in `rationale`.
+When a complete repository manifest selects a first-class external backing
+service that the production workload supports, preserve that backing path
+instead of silently switching to an embedded fallback. Exclude unrelated
+development-only workloads individually.
+Before choosing the profile, inspect the production Dockerfile plus root-level
+Compose, Helm, deployment, and release manifests. If one complete manifest
+wires the production application client to an external backing service, select
+that path even when the bare image has an embedded fallback. Select the
+embedded fallback only when no complete manifest selects the external path.
 Model dependencies required for the workload's primary production function,
 not only those required for its process to start. A UI, API, gateway, or admin
 client that can boot empty still requires one instance of the core service it
@@ -51,9 +49,9 @@ For every workload:
   and must be a blocker.
 - Use `image.kind: published` only for an immutable first-party image tied to
   the exact source tag. Cite both the source Dockerfile and release publication.
-- Trace the effective image ENTRYPOINT/CMD and always record the exact effective
-  process as argv or shell without changing it. The deterministic renderer may
-  need to wrap that process to construct a credential-bearing runtime value.
+- Trace the effective image ENTRYPOINT/CMD. Use `process.kind: imageDefault`
+  only when no runtime wrapper can be required. Otherwise record the exact
+  source process as argv or shell without changing it.
 - Record every listener and only externally required routes.
 - Record source-native nondependency environment configuration. Use
   `developerInput` for user-supplied values and mark every credential or secret
