@@ -950,6 +950,102 @@ def reconcile_optional_versions(
     return changes
 
 
+def reconcile_fixed_source_ports(
+    candidate: Path,
+    evidence: dict[str, Any],
+    authoring_contract: dict[str, Any],
+) -> list[dict[str, Any]]:
+    facts = evidence.get("facts") if isinstance(evidence, dict) else None
+    source_dependencies = facts.get("dependencies") if isinstance(facts, dict) else None
+    if not isinstance(source_dependencies, list):
+        return []
+
+    fixed_ports: dict[str, set[str]] = {}
+    for dependency in source_dependencies:
+        if not isinstance(dependency, dict):
+            continue
+        kind = str(dependency.get("kind", "")).lower()
+        overrides = dependency.get("supportedOverrides")
+        if isinstance(overrides, dict):
+            overrides = list(overrides.values())
+        if not isinstance(overrides, list):
+            continue
+        for override in overrides:
+            if (
+                isinstance(override, dict)
+                and str(override.get("field", "")).lower() == "port"
+                and override.get("configurable") is False
+                and override.get("default") is not None
+            ):
+                fixed_ports.setdefault(kind, set()).add(str(override["default"]))
+
+    source_path = candidate / "app.bicep"
+    resource_types = {
+        symbol: resource_type.split("@", 1)[0]
+        for symbol, resource_type in re.findall(
+            r"\bresource\s+([A-Za-z_][A-Za-z0-9_]*)\s+'([^']+)'",
+            source_path.read_text(),
+        )
+    }
+    type_kinds = {
+        qualified_type: kind
+        for kind, qualified_type in DEPENDENCY_AUTHORING_TYPES.items()
+    }
+    requirements_path = candidate / "requirements.json"
+    requirements = json.loads(requirements_path.read_text())
+    changes: list[dict[str, Any]] = []
+    for dependency in requirements.get("dependencies", []):
+        if not isinstance(dependency, dict):
+            continue
+        symbol = dependency.get("resourceSymbol")
+        qualified_type = resource_types.get(symbol)
+        kind = type_kinds.get(qualified_type)
+        ports = fixed_ports.get(kind or "", set())
+        binding = (
+            authoring_contract.get("bundles", {})
+            .get(qualified_type, {})
+            .get("protocol", {})
+            .get("binding", {})
+        )
+        contract_port = binding.get("portLiteral", binding.get("port"))
+        if (
+            len(ports) != 1
+            or contract_port is None
+            or str(contract_port) not in ports
+        ):
+            continue
+        setting = next(
+            (
+                item
+                for item in dependency.get("settings", [])
+                if isinstance(item, dict)
+                and str(item.get("name", "")).partition("=")[0] == "port"
+            ),
+            None,
+        )
+        if not isinstance(setting, dict):
+            continue
+        expected = int(contract_port) if str(contract_port).isdigit() else contract_port
+        delivery = setting.get("delivery")
+        if (
+            isinstance(delivery, dict)
+            and delivery.get("kind") == "sourceDefault"
+            and delivery.get("value") == expected
+        ):
+            continue
+        setting["delivery"] = {"kind": "sourceDefault", "value": expected}
+        changes.append(
+            {
+                "resourceSymbol": symbol,
+                "setting": "port",
+                "value": expected,
+            }
+        )
+    if changes:
+        write_json(requirements_path, requirements)
+    return changes
+
+
 def reconcile_bicep_expressions(candidate: Path) -> list[dict[str, str]]:
     source_path = candidate / "app.bicep"
     source = source_path.read_text()
@@ -1792,6 +1888,7 @@ Expected/golden application definitions are unavailable.
             {
                 "requirementChanges": [],
                 "bicepConfigChanges": [],
+                "sourceDefaultChanges": [],
                 "runtimeCompositeChanges": [],
                 "secretCompositeEnvChanges": [],
                 "optionalVersionChanges": [],
@@ -1802,6 +1899,11 @@ Expected/golden application definitions are unavailable.
             else reconcile_requirements(candidate, authoring_contract)
         )
         if not handoff_errors:
+            reconciliation["sourceDefaultChanges"] = reconcile_fixed_source_ports(
+                candidate,
+                evidence,
+                authoring_contract,
+            )
             reconciliation["optionalVersionChanges"] = (
                 reconcile_optional_versions(candidate, evidence)
             )
@@ -1900,6 +2002,11 @@ candidate files.
             status["repair"] = public_invocation(repair_invocation)
             shutil.copytree(candidate, run_dir / "candidate-repaired")
             reconciliation = reconcile_requirements(candidate, authoring_contract)
+            reconciliation["sourceDefaultChanges"] = reconcile_fixed_source_ports(
+                candidate,
+                evidence,
+                authoring_contract,
+            )
             reconciliation["optionalVersionChanges"] = (
                 reconcile_optional_versions(candidate, evidence)
             )
