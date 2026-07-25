@@ -470,6 +470,25 @@ def normalize_evidence(value: dict[str, Any]) -> dict[str, Any]:
                 "conflict",
             }:
                 value["status"] = "complete"
+        if value.get("status") not in {
+            "ready",
+            "complete",
+            "completed",
+            "blocked",
+            "needs_more_info",
+            "conflict",
+        }:
+            blockers = value.get("blockers")
+            workloads = facts.get("workloads")
+            if isinstance(blockers, list) and blockers:
+                value["status"] = "blocked"
+            elif (
+                isinstance(blockers, list)
+                and not blockers
+                and isinstance(workloads, list)
+                and workloads
+            ):
+                value["status"] = "complete"
     return value
 
 
