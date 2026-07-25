@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -155,29 +157,33 @@ def invoke(
         argv.extend(["--session-id", session_id, "--agent", agent])
     argv.extend(["-p", prompt])
     started = time.monotonic()
+    process = subprocess.Popen(
+        argv,
+        cwd=target,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
     try:
-        result = subprocess.run(
-            argv,
-            cwd=target,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=max(1, timeout),
-            check=False,
-        )
+        stdout, stderr = process.communicate(timeout=max(1, timeout))
         timed_out = False
-        status = result.returncode
-        stdout = result.stdout
-        stderr = result.stderr
-    except subprocess.TimeoutExpired as exc:
+        status = process.returncode
+    except subprocess.TimeoutExpired:
         timed_out = True
         status = 124
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(errors="replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
     elapsed = round(time.monotonic() - started, 3)
     (output / "events.jsonl").write_text(stdout)
     (output / "stderr.txt").write_text(stderr)
