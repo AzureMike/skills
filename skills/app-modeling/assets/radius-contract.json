@@ -1486,7 +1486,7 @@
         "connectionStringSecret": "connectionString",
         "entityInput": "queue",
         "hostTransform": "amqps://<host>.servicebus.windows.net",
-        "port": 5671
+        "portLiteral": 5671
       },
       "clientKind": "amqp-1.0-service-bus",
       "requiredClientSettings": [
@@ -1529,7 +1529,7 @@
     "Radius.Data/mongoDatabases": {
       "binding": {
         "endpointProperty": "endpoint",
-        "uriSecret": "connectionString"
+        "connectionUriSecret": "connectionString"
       },
       "clientKind": "mongodb",
       "requiredClientSettings": [
@@ -1611,7 +1611,7 @@
     },
     "Radius.Messaging/kafka": {
       "binding": {
-        "bootstrapTransform": "<host>.servicebus.windows.net:9093",
+        "bootstrapServersTransform": "<host>.servicebus.windows.net:9093",
         "connectionStringSecret": "connectionString",
         "topicInput": "topic"
       },
@@ -1634,7 +1634,7 @@
       "binding": {
         "accountKeySecret": "accountKey",
         "accountNameProperty": "accountName",
-        "connectionStringSecret": "connectionString",
+        "accountKeyOrConnectionStringSecret": "connectionString",
         "containerInput": "containerName",
         "endpointProperty": "endpoint"
       },

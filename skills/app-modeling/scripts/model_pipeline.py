@@ -468,6 +468,49 @@ def native_setting(
     )
 
 
+def contract_constants(profile: dict[str, Any]) -> dict[str, str]:
+    """Slots the contract fixes to a constant, written as ``slot=value``.
+
+    ``requiredClientSettings`` mixes two kinds of entry. A bare name is a slot
+    the caller has to fill; a ``name=value`` pair is a value the provider
+    dictates. Reading the second kind here is what keeps constants such as the
+    SASL mechanism out of this file.
+    """
+
+    constants: dict[str, str] = {}
+    for entry in (
+        (profile.get("requiredClientSettings") or [])
+        + (profile.get("runtimeRequiredClientSettings") or [])
+    ):
+        name, separator, value = entry.partition("=")
+        if separator:
+            constants[name] = value
+    return constants
+
+
+def contract_slots(profile: dict[str, Any]) -> set[str]:
+    return {
+        entry.partition("=")[0]
+        for entry in (
+            (profile.get("requiredClientSettings") or [])
+            + (profile.get("runtimeRequiredClientSettings") or [])
+        )
+    } | {
+        name
+        for group in (profile.get("requiredAnyClientSettings") or [])
+        for name in group
+    }
+
+
+def scalar(text: str) -> Any:
+    if text in {"true", "false"}:
+        return text == "true"
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
 def setting_value(
     *,
     dependency: dict[str, Any],
@@ -477,51 +520,66 @@ def setting_value(
     contract: dict[str, Any],
     parameters: dict[str, dict[str, Any]],
 ) -> tuple[str, Any, str | None]:
+    """Resolve one client setting from the contract alone.
+
+    Every binding key is named ``<slot><Kind>``, and the suffix states how the
+    value is obtained. Dispatching on that suffix rather than on the slot name
+    is what lets a backing service be added to the contract without touching
+    this file.
+    """
+
     profile = contract["protocolProfiles"].get(qualified_type, {})
     binding = profile.get("binding", {})
-    if slot == "host":
-        return "value", Expression(f"{symbol}.properties.{binding['hostProperty']}"), None
-    if slot == "port":
-        return "value", binding.get("portLiteral", binding.get("port")), None
-    if slot in {"database", "username", "password"}:
-        value = input_expression(dependency, binding[f"{slot}Input"], parameters)
-        return ("secret" if slot == "password" else "value"), value, None
-    if slot == "endpoint":
-        return "value", Expression(f"{symbol}.properties.{binding['endpointProperty']}"), None
-    if slot == "apiKey":
-        return "managedSecret", Expression(f"{symbol}.properties.secrets.name"), binding["apiKeySecret"]
-    if slot in {"indexName", "apiVersion", "deploymentOrModel", "container", "accountName"}:
-        if slot == "accountName":
-            return (
-                "value",
-                Expression(f"{symbol}.properties.{binding['accountNameProperty']}"),
-                None,
-            )
-        return "value", input_expression(dependency, slot, parameters), None
-    if slot == "accountKeyOrConnectionString":
-        key = binding.get("connectionStringSecret", binding.get("accountKeySecret"))
-        return "managedSecret", Expression(f"{symbol}.properties.secrets.name"), key
-    if slot == "connectionUri":
-        return "managedSecret", Expression(f"{symbol}.properties.secrets.name"), binding["uriSecret"]
-    if slot == "uri":
-        return "managedSecret", Expression(f"{symbol}.properties.secrets.name"), binding["uriSecret"]
-    if slot == "tls":
-        return "value", True, None
-    if slot == "certificateValidation":
-        return "value", True, None
-    if slot == "authMode":
-        return "value", "connectionString", None
-    if slot == "bootstrapServers":
-        transform = binding["bootstrapTransform"].replace(
-            "<host>", f"${{{symbol}.properties.host}}"
+
+    # Read off the provisioned resource.
+    if f"{slot}Property" in binding:
+        target = binding[f"{slot}Property"]
+        return "value", Expression(f"{symbol}.properties.{target}"), None
+
+    # Held in the resource's secret collection; delivered by reference.
+    if f"{slot}Secret" in binding:
+        return (
+            "managedSecret",
+            Expression(f"{symbol}.properties.secrets.name"),
+            binding[f"{slot}Secret"],
         )
-        escaped = transform.replace("\\", "\\\\").replace("'", "\\'")
+
+    # Fixed by the provider.
+    if f"{slot}Literal" in binding:
+        return "value", binding[f"{slot}Literal"], None
+
+    # Composed from resource properties by a contract-supplied format string.
+    if f"{slot}Transform" in binding:
+        rendered = binding[f"{slot}Transform"]
+        for name in re.findall(r"<([A-Za-z0-9_]+)>", rendered):
+            rendered = rendered.replace(
+                f"<{name}>", f"${{{symbol}.properties.{name}}}"
+            )
+        escaped = rendered.replace("\\", "\\\\").replace("'", "\\'")
         return "value", Expression("'" + escaped + "'"), None
-    if slot == "security.protocol":
-        return "value", "SASL_SSL", None
-    if slot == "sasl.mechanism":
-        return "value", "PLAIN", None
-    raise ValueError(f"{dependency['id']}: unsupported contract slot {slot!r}")
+
+    # Supplied by the definition, under the name the contract gives it.
+    if f"{slot}Input" in binding:
+        name = binding[f"{slot}Input"]
+        value = input_expression(dependency, name, parameters)
+        secure = bool(SECRET_NAME.search(name) or name == "password")
+        return ("secret" if secure else "value"), value, None
+
+    constants = contract_constants(profile)
+    if slot in constants:
+        return "value", scalar(constants[slot]), None
+
+    # Named by the contract with no binding of its own: the definition supplies
+    # it under the slot's own name.
+    if slot in contract_slots(profile):
+        value = input_expression(dependency, slot, parameters)
+        secure = bool(SECRET_NAME.search(slot) or slot == "password")
+        return ("secret" if secure else "value"), value, None
+
+    raise ValueError(
+        f"{dependency['id']}: the contract for {qualified_type} does not "
+        f"define slot {slot!r}"
+    )
 
 
 def shell_process(workload: dict[str, Any]) -> str:
