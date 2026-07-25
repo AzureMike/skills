@@ -243,7 +243,8 @@
                   },
                   "context": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Docker build context, relative to the application directory given in the prompt - not to the repository root. Use '.' when the context is the application directory itself."
                   },
                   "citation": {
                     "$ref": "#/$defs/citation"

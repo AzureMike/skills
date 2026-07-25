@@ -8,6 +8,7 @@ import argparse
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import posixpath
 import re
 import shlex
 from typing import Any
@@ -743,7 +744,15 @@ def resolve(
             image_symbol = workload_symbol + "Image"
             context = image["context"].strip("/")
             app_path = "" if source_path in {"", "."} else source_path.strip("/") + "/"
-            build_path = (app_path + context).strip("/")
+            # A context is relative to the application directory, but when the
+            # application sits in a subdirectory it is easy to describe it from
+            # the repository root instead. Both mean the same directory.
+            if app_path and (context + "/").startswith(app_path):
+                context = context[len(app_path.rstrip("/")):].strip("/")
+            # posixpath.normpath collapses "." and ".." segments so a context of
+            # "." against an application directory yields that directory, not a
+            # path with a dangling "/." on the end.
+            build_path = posixpath.normpath(app_path + context).strip("/")
             if build_path == ".":
                 build_path = ""
             source = remote.rstrip("/")
