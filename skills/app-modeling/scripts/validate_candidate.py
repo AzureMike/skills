@@ -277,25 +277,40 @@ def validate_template(
             env_values.extend(container.get("env", {}).values())
             for name, body in container.get("env", {}).items():
                 value = body.get("value")
-                if value is not None and SECRET_ENV.search(name):
+                if value is None or not SECRET_ENV.search(name):
+                    continue
+                # A secret may reach a container from a managed secret, or as a
+                # secure parameter the deployer supplied - including composed
+                # into a connection URI, which is the only shape some clients
+                # accept. What must never happen is a secret written into the
+                # definition as a plain literal.
+                carries_secure_input = isinstance(value, str) and any(
+                    f"parameters('{parameter}')" in value
+                    for parameter in secure_parameters
+                )
+                if not carries_secure_input:
                     error(
                         errors,
                         "SECRET_ENV_VALUE",
                         f"{path}.properties.containers.env.{name}",
-                        "Secret-like container settings must use "
-                        "valueFrom.secretKeyRef, not env.value.",
+                        "A secret-like setting must come from a managed secret "
+                        "or a secure parameter, never a literal value.",
                     )
-                if not isinstance(value, str):
+
+        for container_name, container in properties.get("containers", {}).items():
+            argv = list(container.get("command") or []) + list(container.get("args") or [])
+            for position, item in enumerate(argv):
+                if not isinstance(item, str):
                     continue
                 for parameter in secure_parameters:
-                    marker = f"parameters('{parameter}')"
-                    if marker in value and value != f"[{marker}]":
+                    if f"parameters('{parameter}')" in item:
                         error(
                             errors,
-                            "SECRET_COMPOSITION",
-                            f"{path}.properties.containers.env.{name}",
-                            "Secure parameters must be injected directly, not composed "
-                            "into aggregate strings.",
+                            "SECRET_IN_PROCESS_ARGUMENTS",
+                            f"{path}.properties.containers.{container_name}"
+                            f".command[{position}]",
+                            "A secure parameter must not be expanded into process "
+                            "arguments, where it is visible in the process table.",
                         )
 
         for name, connection in properties.get("connections", {}).items():
@@ -317,527 +332,12 @@ def validate_template(
                 )
 
 
-def validate_requirements(template, contract, requirements, errors):
-    resources = normalize_resources(template)
-    by_symbol = {resource["symbol"]: resource for resource in resources}
-    env = {}
-    runtime_text = ""
-    command_text = ""
-    for resource in resources:
-        if resource["type"] != "Radius.Compute/containers@2025-08-01-preview":
-            continue
-        for container in resource["properties"].get("containers", {}).values():
-            env.update(container.get("env", {}))
-            command_text += "\n" + "\n".join(
-                str(item)
-                for item in (container.get("command") or []) + (container.get("args") or [])
-            )
-            runtime_text += "\n" + json.dumps(
-                {
-                    "command": container.get("command"),
-                    "args": container.get("args"),
-                    "env": container.get("env"),
-                },
-                sort_keys=True,
-            )
-    if "$${" in runtime_text:
-        error(
-            errors,
-            "SHELL_PID_EXPANSION",
-            "$.runtimeConfig",
-            "Container scripts must preserve shell ${...} literally; $${...} "
-            "expands $$ as the shell process ID.",
-        )
-    secret_keys = {
-        key
-        for key, body in env.items()
-        if isinstance(body, dict)
-        and body.get("valueFrom", {}).get("secretKeyRef")
-    }
-    for name, body in env.items():
-        value = body.get("value") if isinstance(body, dict) else None
-        if not isinstance(value, str):
-            continue
-        for secret_key in secret_keys:
-            if re.search(rf"\$(?:\{{{re.escape(secret_key)}\}}|{re.escape(secret_key)}\b)", value):
-                error(
-                    errors,
-                    "UNEXPANDED_SECRET_COMPOSITE",
-                    f"$.runtimeConfig.env.{name}",
-                    f"Container env.value does not expand ${secret_key}; construct "
-                    "the secret-bearing composite in command/args at runtime.",
-                )
-
-    dependencies = {
-        item.get("resourceSymbol"): item
-        for item in requirements.get("dependencies", [])
-        if isinstance(item, dict) and item.get("resourceSymbol")
-    }
-    for symbol, resource in by_symbol.items():
-        qualified_type = (resource["type"] or "").split("@", 1)[0]
-        profile = contract.get("protocolProfiles", {}).get(qualified_type, {})
-        required = (
-            profile.get("requiredClientSettings", [])
-            + profile.get("runtimeRequiredClientSettings", [])
-        )
-        if not required:
-            continue
-
-        dependency = dependencies.get(symbol)
-        if not dependency:
-            error(
-                errors,
-                "REQUIREMENT_DEPENDENCY",
-                f"$.requirements.dependencies.{symbol}",
-                f"Missing requirements ledger entry for {qualified_type}.",
-            )
-            continue
-
-        settings = {
-            item.get("name"): item
-            for item in dependency.get("settings", [])
-            if isinstance(item, dict) and item.get("name")
-        }
-        normalized_settings = {
-            name.split("=", 1)[0]: item for name, item in settings.items()
-        }
-        binding = profile.get("binding", {})
-        runtime_composite = profile.get("runtimeComposite")
-        runtime_uri = profile.get("runtimeUri")
-        for binding_name, transform in binding.items():
-            if not binding_name.endswith("Transform") or not isinstance(transform, str):
-                continue
-            placeholders = re.findall(r"<([A-Za-z][A-Za-z0-9]*)>", transform)
-            literal_parts = [
-                part
-                for part in re.split(r"<[A-Za-z][A-Za-z0-9]*>", transform)
-                if part
-            ]
-            rendered = runtime_text
-            if (
-                not placeholders
-                or f"reference('{symbol}')" not in rendered
-                or not all(part in rendered for part in literal_parts)
-            ):
-                error(
-                    errors,
-                    "REQUIREMENT_BINDING_TRANSFORM",
-                    f"$.requirements.dependencies.{symbol}.binding.{binding_name}",
-                    f"Runtime configuration must render the verified transform "
-                    f"{transform!r} from {qualified_type}.",
-                )
-        port_literal = binding.get("portLiteral", binding.get("port"))
-        if port_literal is not None and "port" in normalized_settings:
-            port_delivery = normalized_settings["port"].get("delivery", {})
-            if port_delivery.get("kind") == "runtimeConfig":
-                port_value = runtime_text
-            elif port_delivery.get("kind") == "sourceDefault":
-                port_value = port_delivery.get("value")
-            else:
-                port_value = env.get(port_delivery.get("key"), {}).get("value")
-            if port_value is None or str(port_literal) not in str(port_value):
-                error(
-                    errors,
-                    "REQUIREMENT_ENV",
-                    f"$.requirements.dependencies.{symbol}.settings.port",
-                    f"The rendered client setting must contain literal port {port_literal}.",
-                )
-        for requirement in required:
-            name, _, required_value = requirement.partition("=")
-            setting = settings.get(requirement) or normalized_settings.get(name)
-            path = f"$.requirements.dependencies.{symbol}.settings.{requirement}"
-            if not setting:
-                error(
-                    errors,
-                    "REQUIREMENT_SETTING",
-                    path,
-                    f"Missing required client setting {requirement!r}.",
-                )
-                continue
-            if not setting.get("evidence"):
-                error(errors, "REQUIREMENT_EVIDENCE", path, "Source evidence is required.")
-
-            delivery = setting.get("delivery", {})
-            kind = delivery.get("kind")
-            if required_value == "$ConnectionString" and kind != "runtimeConfig":
-                error(
-                    errors,
-                    "REQUIREMENT_COMPOSITE_DELIVERY",
-                    path,
-                    "A literal composite component must be rendered in the "
-                    "native runtime setting; it cannot be delivered as a "
-                    "standalone environment value or secret.",
-                )
-                continue
-            if kind == "sourceDefault":
-                continue
-            if kind == "runtimeConfig":
-                expected = delivery.get("value")
-                if expected is None:
-                    expected = required_value
-                if str(expected).lower() not in runtime_text.lower():
-                    error(
-                        errors,
-                        "REQUIREMENT_RUNTIME_CONFIG",
-                        path,
-                        f"Rendered runtime configuration must contain {expected!r}.",
-                    )
-                if (
-                    required_value == "$ConnectionString"
-                    and r"\$ConnectionString" not in command_text
-                ):
-                    error(
-                        errors,
-                        "SHELL_LITERAL_CONNECTION_STRING",
-                        path,
-                        "The compiled runtime command must escape "
-                        "`$ConnectionString` so the shell preserves the literal "
-                        "Event Hubs username.",
-                    )
-                continue
-            key = delivery.get("key")
-            actual = env.get(key)
-            if kind == "secretKeyRef":
-                secret = (actual or {}).get("valueFrom", {}).get("secretKeyRef", {})
-                required_secret_key = (
-                    required_value.split(":", 1)[1]
-                    if required_value.startswith("managedSecret:")
-                    else None
-                )
-                if not key or not secret:
-                    error(
-                        errors,
-                        "REQUIREMENT_ENV",
-                        path,
-                        f"Required secret environment setting {key!r} is missing.",
-                    )
-                elif delivery.get("secretKey") and secret.get("key") != delivery["secretKey"]:
-                    error(
-                        errors,
-                        "REQUIREMENT_ENV",
-                        path,
-                        f"Expected secret key {delivery['secretKey']!r}, got {secret.get('key')!r}.",
-                    )
-                elif (
-                    required_secret_key
-                    and delivery.get("secretKey") != required_secret_key
-                ):
-                    error(
-                        errors,
-                        "REQUIREMENT_ENV",
-                        path,
-                        f"Recipe exposes Radius secret key {required_secret_key!r}, "
-                        f"not {delivery.get('secretKey')!r}.",
-                    )
-                elif (
-                    isinstance(runtime_composite, dict)
-                    and runtime_composite.get("managedSecret") == required_secret_key
-                    and not re.search(
-                        rf"\$(?:\{{{re.escape(str(key))}\}}|{re.escape(str(key))}\b)",
-                        command_text,
-                    )
-                ):
-                    error(
-                        errors,
-                        "REQUIREMENT_COMPOSITE_SECRET",
-                        path,
-                        f"Runtime composite must expand secret environment "
-                        f"setting {key!r}.",
-                    )
-                continue
-            if kind == "literal":
-                expected = delivery.get("value") or required_value
-                actual_value = (actual or {}).get("value")
-                if not key or actual_value is None or str(expected) not in str(actual_value):
-                    error(
-                        errors,
-                        "REQUIREMENT_ENV",
-                        path,
-                        f"Environment setting {key!r} must contain {expected!r}.",
-                    )
-                continue
-            if kind != "env":
-                error(
-                    errors,
-                    "REQUIREMENT_DELIVERY",
-                    path,
-                    "Delivery kind must be env, literal, runtimeConfig, "
-                    "secretKeyRef, or sourceDefault.",
-                )
-                continue
-
-            expected = delivery.get("value")
-            if not key or actual is None:
-                error(
-                    errors,
-                    "REQUIREMENT_ENV",
-                    path,
-                    f"Required environment setting {key!r} is missing.",
-                )
-            elif (
-                expected is not None
-                and "<" not in str(expected)
-                and str(actual.get("value")).lower() != str(expected).lower()
-            ):
-                error(
-                    errors,
-                    "REQUIREMENT_ENV",
-                    path,
-                    f"Expected {key}={expected!r}, got {actual.get('value')!r}.",
-                )
-
-        if isinstance(runtime_uri, dict):
-            uri_format = runtime_uri.get("format")
-            components = runtime_uri.get("components", [])
-            encoded_components = runtime_uri.get("percentEncode", [])
-            suffixes = runtime_uri.get("settingSuffixes", [])
-            allowed_schemes = runtime_uri.get("schemes", [])
-            runtime_keys = {
-                delivery.get("key")
-                for setting in settings.values()
-                for delivery in [setting.get("delivery")]
-                if isinstance(delivery, dict)
-                and delivery.get("kind") == "runtimeConfig"
-                and isinstance(delivery.get("key"), str)
-                and any(
-                    delivery["key"].endswith(suffix)
-                    for suffix in suffixes
-                    if isinstance(suffix, str)
-                )
-            }
-            uses_runtime_uri = bool(runtime_keys) or any(
-                f"{scheme}://" in command_text
-                for scheme in allowed_schemes
-                if isinstance(scheme, str)
-            )
-            if not uses_runtime_uri:
-                continue
-            if len(runtime_keys) != 1:
-                error(
-                    errors,
-                    "REQUIREMENT_RUNTIME_URI_SETTING",
-                    f"$.requirements.dependencies.{symbol}.runtimeUri",
-                    "Runtime URI must use one source-supported URI setting.",
-                )
-            else:
-                runtime_key = next(iter(runtime_keys))
-                if not re.search(
-                    rf"\bexport\s+{re.escape(runtime_key)}\s*=",
-                    command_text,
-                ):
-                    error(
-                        errors,
-                        "REQUIREMENT_RUNTIME_URI_SETTING",
-                        f"$.requirements.dependencies.{symbol}.runtimeUri",
-                        f"Runtime command must export {runtime_key}.",
-                    )
-            if not any(
-                f"{scheme}://" in command_text
-                for scheme in allowed_schemes
-                if isinstance(scheme, str)
-            ):
-                error(
-                    errors,
-                    "REQUIREMENT_RUNTIME_URI_SCHEME",
-                    f"$.requirements.dependencies.{symbol}.runtimeUri",
-                    "Runtime URI must use a source-supported verified scheme.",
-                )
-            if isinstance(uri_format, str):
-                literal_parts = [
-                    part
-                    for part in re.split(
-                        r"<[A-Za-z][A-Za-z0-9]*>",
-                        uri_format,
-                    )
-                    if part
-                ]
-                if not all(part in command_text for part in literal_parts):
-                    error(
-                        errors,
-                        "REQUIREMENT_RUNTIME_URI_FORMAT",
-                        f"$.requirements.dependencies.{symbol}.runtimeUri",
-                        "Runtime URI must preserve the verified format "
-                        f"{uri_format!r}.",
-                    )
-            component_settings = {
-                component: normalized_settings.get(component)
-                for component in components
-                if isinstance(component, str)
-            }
-            for component in encoded_components:
-                setting = component_settings.get(component)
-                delivery = (
-                    setting.get("delivery")
-                    if isinstance(setting, dict)
-                    else None
-                )
-                key = delivery.get("key") if isinstance(delivery, dict) else None
-                if (
-                    not isinstance(key, str)
-                    or not re.search(
-                        rf"\$(?:\{{{re.escape(key)}\}}|{re.escape(key)}\b)",
-                        command_text,
-                    )
-                    or not (
-                        (
-                            "urllib.parse import quote" in command_text
-                            and 'safe=""' in command_text
-                        )
-                        or (
-                            "urlencode() {" in command_text
-                            and "printf '%02X'" in command_text
-                            and "LC_ALL=C" in command_text
-                        )
-                        or (
-                            "--data-urlencode" in command_text
-                            and "--unix-socket /dev/null" in command_text
-                            and "%20" in command_text
-                        )
-                    )
-                ):
-                    error(
-                        errors,
-                        "REQUIREMENT_RUNTIME_URI_ENCODING",
-                        f"$.requirements.dependencies.{symbol}.settings.{component}",
-                        f"Runtime URI component {component!r} must be "
-                        "percent-encoded from its native environment input.",
-                    )
-
-        if isinstance(runtime_composite, dict):
-            composite_format = runtime_composite.get("format")
-            if isinstance(composite_format, str):
-                rendered_command = command_text.replace(r"\"", '"')
-                literal_parts = [
-                    part
-                    for part in re.split(r"<(?:username|password)>", composite_format)
-                    if part
-                ]
-                if not all(part in rendered_command for part in literal_parts):
-                    error(
-                        errors,
-                        "REQUIREMENT_COMPOSITE_FORMAT",
-                        f"$.requirements.dependencies.{symbol}.runtimeComposite",
-                        "Runtime configuration must preserve the verified "
-                        f"composite format {composite_format!r}.",
-                    )
-            composite_username = runtime_composite.get("username")
-            composite_secret = runtime_composite.get("managedSecret")
-            username_name = next(
-                (
-                    name
-                    for name, _, value in (
-                        item.partition("=") for item in required
-                    )
-                    if value == composite_username
-                ),
-                None,
-            )
-            password_name = next(
-                (
-                    name
-                    for name, _, value in (
-                        item.partition("=") for item in required
-                    )
-                    if value == f"managedSecret:{composite_secret}"
-                ),
-                None,
-            )
-            username_delivery = (settings.get(username_name) or {}).get(
-                "delivery", {}
-            )
-            password_delivery = (settings.get(password_name) or {}).get(
-                "delivery", {}
-            )
-            composite_key = username_delivery.get("key")
-            secret_key = password_delivery.get("key")
-            expected_fragments = (
-                f'export {composite_key}="',
-                f'username=\\"\\{composite_username}\\"',
-                f'password=\\"${secret_key}\\"',
-            )
-            if (
-                not composite_key
-                or not secret_key
-                or not all(fragment in command_text for fragment in expected_fragments)
-            ):
-                error(
-                    errors,
-                    "REQUIREMENT_COMPOSITE_SHELL",
-                    f"$.requirements.dependencies.{symbol}.runtimeComposite",
-                    "The compiled shell command must use canonical double-quoted "
-                    "runtime expansion for the verified composite.",
-                )
-
-    for index, item in enumerate(requirements.get("persistentPaths", [])):
-        if not isinstance(item, dict) or item.get("required") is False:
-            continue
-        symbol = item.get("containerResourceSymbol")
-        container_name = item.get("container")
-        required_path = item.get("path")
-        path = f"$.requirements.persistentPaths.{index}"
-        resource = by_symbol.get(symbol)
-        if (
-            not resource
-            or resource["type"] != "Radius.Compute/containers@2025-08-01-preview"
-        ):
-            error(errors, "PERSISTENT_RESOURCE", path, "Container resource is missing.")
-            continue
-        container = resource["properties"].get("containers", {}).get(container_name, {})
-        mounts = container.get("volumeMounts", [])
-        matched = [
-            mount
-            for mount in mounts
-            if isinstance(mount, dict)
-            and isinstance(mount.get("mountPath"), str)
-            and isinstance(required_path, str)
-            and (
-                required_path == mount["mountPath"]
-                or required_path.startswith(mount["mountPath"].rstrip("/") + "/")
-            )
-        ]
-        volumes = resource["properties"].get("volumes", {})
-        if not matched:
-            error(
-                errors,
-                "PERSISTENT_PATH",
-                path,
-                f"Required persistent path {required_path!r} is not mounted.",
-            )
-        elif not any(
-            isinstance(volumes.get(mount.get("volumeName")), dict)
-            and "persistentVolume" in volumes[mount["volumeName"]]
-            for mount in matched
-        ):
-            error(
-                errors,
-                "PERSISTENT_VOLUME",
-                path,
-                f"Path {required_path!r} is not backed by a persistent volume.",
-            )
-
-    for index, item in enumerate(requirements.get("secretEnvironment", [])):
-        if not isinstance(item, dict):
-            continue
-        key = item.get("key")
-        path = f"$.requirements.secretEnvironment.{index}"
-        body = env.get(key)
-        if not body:
-            error(errors, "SECRET_ENV_MISSING", path, f"Secret setting {key!r} is missing.")
-        elif not body.get("valueFrom", {}).get("secretKeyRef"):
-            error(
-                errors,
-                "SECRET_ENV_BINDING",
-                path,
-                f"Secret setting {key!r} must use valueFrom.secretKeyRef.",
-            )
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-bicep", type=Path, required=True)
     parser.add_argument("--bicepconfig", type=Path, required=True)
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
-    parser.add_argument("--requirements", type=Path, required=True)
+    parser.add_argument("--requirements", type=Path)
     parser.add_argument("--source-remote")
     parser.add_argument("--source-commit")
     parser.add_argument("--source-path")
@@ -847,7 +347,6 @@ def main():
 
     contract = load_json(args.contract, "contract")
     config = load_json(args.bicepconfig, "bicepconfig")
-    requirements = load_json(args.requirements, "requirements")
     errors = []
 
     expected_extension = contract.get("extension", {}).get("reference")
@@ -904,7 +403,6 @@ def main():
             source_commit=args.source_commit,
             source_path=args.source_path,
         )
-        validate_requirements(template, contract, requirements, errors)
 
     report = {"valid": not errors, "errors": errors}
     emit(report, args.output)

@@ -669,12 +669,16 @@ def resolve(
         qualified_type = dependency_types(contract)[dependency["kind"]]
         recipe = contract["azureRecipeMappings"].get(qualified_type, {})
         name_parameter = symbol + "Name"
-        # Named after the dependency the source declared, so the file deploys
-        # as written while staying overridable.
-        parameters[name_parameter] = {
-            "secure": False,
-            "default": slug(dependency["id"]),
-        }
+        # A provider-global name must be chosen by whoever deploys, so the
+        # contract requires it be asked for rather than defaulted.
+        global_name = bool(recipe.get("providerGlobalName")) and bool(
+            contract["policies"].get("providerGlobalNamesUseRequiredParameters")
+        )
+        parameters[name_parameter] = (
+            {"secure": False}
+            if global_name
+            else {"secure": False, "default": slug(dependency["id"])}
+        )
         properties: dict[str, Any] = {
             "environment": Expression("environment"),
             "application": Expression("app.id"),
