@@ -76,6 +76,11 @@ For every workload:
   a file, or a port this definition does not declare, because that subsystem
   cannot function here. Record configuration that genuinely has to be supplied
   from outside the image, and cite where the source supplies it.
+  A setting the application validates as required has no default, so leaving
+  it out fails startup: it is never inert, however cosmetic its value looks.
+  A label, display name or identifier that a required field carries is part of
+  the configuration it belongs to, and a group of settings indexed together is
+  supplied or omitted whole.
 - Use `developerInput` only for a value the deployer actually possesses and
   the deployment cannot proceed without: a credential, or a setting the
   application refuses to start without. A variable the application reads but

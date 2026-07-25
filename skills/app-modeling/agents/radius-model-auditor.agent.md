@@ -70,7 +70,9 @@ Confine findings to the six judgements the model actually made:
    bakes in, one that restates the default the application applies when the
    variable is unset, and one enabling a subsystem needing storage, files or
    ports this definition does not declare. Reject a `developerInput` for a
-   value the application runs without. This covers application configuration
+   value the application runs without. A setting the application validates as
+   required has no default and is never inert, so its absence is a fault even
+   when its value looks cosmetic. This covers application configuration
    only. A dependency setting exists because the pinned contract requires that
    slot for the connection to work, so it is never inert and is not yours to
    remove; if you believe one is wrong, the finding is that it was
