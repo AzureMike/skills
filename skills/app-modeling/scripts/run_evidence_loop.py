@@ -12,6 +12,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from typing import Any
 import uuid
@@ -23,6 +24,7 @@ from loop_support import (
     parse_json_object,
     remaining,
     remove_agents,
+    run_bounded,
     validate_candidate,
     validate_handoff,
     validate_review,
@@ -3399,6 +3401,7 @@ def main() -> int:
     parser.add_argument("--repair-timeout", type=float, default=60)
     parser.add_argument("--final-review-timeout", type=float, default=30)
     parser.add_argument("--artifact-dir")
+    parser.add_argument("--supervised-child", action="store_true")
     args = parser.parse_args()
 
     started = time.monotonic()
@@ -4004,5 +4007,77 @@ and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
         print(json.dumps(status, sort_keys=True))
 
 
+def supervised_main() -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--target", default=".")
+    parser.add_argument("--deadline-seconds", type=float, default=360)
+    parser.add_argument("--artifact-dir")
+    args, _ = parser.parse_known_args()
+    target = Path(args.target).resolve()
+    if args.artifact_dir:
+        run_dir = Path(args.artifact_dir).resolve()
+        run_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        git_dir_process = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "--git-dir"],
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        if git_dir_process.returncode:
+            print(json.dumps({"status": "failed", "reason": "target is not in Git"}))
+            return 1
+        git_dir = Path(git_dir_process.stdout.strip())
+        if not git_dir.is_absolute():
+            git_dir = (target / git_dir).resolve()
+        run_dir = (
+            git_dir
+            / "app-modeling-runs"
+            / (time.strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
+        ).resolve()
+        run_dir.mkdir(parents=True, exist_ok=False)
+
+    child_args = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
+    if not args.artifact_dir:
+        child_args.extend(["--artifact-dir", str(run_dir)])
+    child_args.append("--supervised-child")
+    agent_paths = [
+        target / ".github" / "agents" / f"{name}.md"
+        for name in (
+            "radius-model-writer",
+            "radius-model-reviewer",
+            "radius-model-auditor",
+        )
+    ]
+    preexisting_agents = {path for path in agent_paths if path.exists()}
+    started = time.monotonic()
+    status, stdout, stderr, timed_out = run_bounded(
+        child_args,
+        cwd=target,
+        timeout=args.deadline_seconds + 5,
+    )
+    sys.stdout.write(stdout)
+    sys.stderr.write(stderr)
+    if not timed_out:
+        return status
+
+    remove_agents(
+        [path for path in agent_paths if path not in preexisting_agents]
+    )
+    result = {
+        "status": "failed",
+        "reason": "supervised internal deadline exceeded",
+        "artifacts": str(run_dir),
+        "elapsedSeconds": round(time.monotonic() - started, 3),
+        "deadlineSeconds": args.deadline_seconds,
+    }
+    write_json(run_dir / "run-status.json", result)
+    print(json.dumps(result, sort_keys=True))
+    return 124
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        main() if "--supervised-child" in sys.argv else supervised_main()
+    )
