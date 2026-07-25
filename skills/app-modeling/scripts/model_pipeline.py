@@ -196,11 +196,24 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
         qualified = kinds.get(dependency["kind"])
         if not qualified:
             continue
-        constants = contract_constants(
-            contract["protocolProfiles"].get(qualified, {})
-        )
+        profile = contract["protocolProfiles"].get(qualified, {})
+        constants = contract_constants(profile)
+        provisioned = secret_slots(profile)
         for position, setting in enumerate(dependency.get("settings") or []):
             if setting["delivery"]["kind"] != "sourceDefault":
+                continue
+            # A credential is generated when the service is provisioned, so no
+            # value in the application can be it. A default here means the
+            # container is handed something other than the real secret and
+            # cannot authenticate, which compiles and validates cleanly.
+            if setting["slot"] in provisioned:
+                errors.append(
+                    f"$.dependencies[{index}].settings[{position}]: "
+                    f"{setting['slot']!r} is a credential the provisioned "
+                    f"{dependency['kind']} generates, so no application default "
+                    "can be it. Record the environment variable, file or "
+                    "argument the application reads this setting from."
+                )
                 continue
             # An application default can stand in for a setting only when it
             # already equals what the provider requires. The contract pins
@@ -630,6 +643,22 @@ def binding_slots(profile: dict[str, Any]) -> set[str]:
         if suffix and suffix != "Input":
             slots.add(key[: -len(suffix)])
     return slots
+
+
+def secret_slots(profile: dict[str, Any]) -> set[str]:
+    """Slots the binding delivers as a managed secret.
+
+    These are the values provisioning creates - passwords, keys, ready-made
+    connection strings. Nothing in the application source can be one of them,
+    which is what makes an application default for such a slot always wrong
+    rather than a judgement call.
+    """
+
+    return {
+        key[: -len("Secret")]
+        for key in profile.get("binding") or {}
+        if key.endswith("Secret")
+    }
 
 
 def contract_slots(profile: dict[str, Any]) -> set[str]:
