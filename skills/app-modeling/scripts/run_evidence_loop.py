@@ -1046,6 +1046,88 @@ def reconcile_fixed_source_ports(
     return changes
 
 
+def reconcile_nested_connections(candidate: Path) -> list[dict[str, str]]:
+    source_path = candidate / "app.bicep"
+    lines = source_path.read_text().splitlines(keepends=True)
+    changes: list[dict[str, str]] = []
+
+    def block_end(start: int, limit: int) -> int | None:
+        depth = 0
+        for index in range(start, limit):
+            depth += lines[index].count("{") - lines[index].count("}")
+            if index > start and depth == 0:
+                return index
+        return None
+
+    resources = [
+        (index, match.group(1))
+        for index, line in enumerate(lines)
+        if (
+            match := re.search(
+                r"\bresource\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
+                r"'Radius\.Compute/containers@[^']+'\s*=\s*\{",
+                line,
+            )
+        )
+    ]
+    for resource_start, symbol in reversed(resources):
+        resource_end = block_end(resource_start, len(lines))
+        if resource_end is None:
+            continue
+        containers_index = next(
+            (
+                index
+                for index in range(resource_start + 1, resource_end)
+                if re.match(r"^(\s*)containers\s*:\s*\{\s*$", lines[index])
+            ),
+            None,
+        )
+        if containers_index is None:
+            continue
+        containers_indent = re.match(r"^(\s*)", lines[containers_index]).group(1)
+        containers_end = block_end(containers_index, resource_end + 1)
+        if containers_end is None:
+            continue
+        if any(
+            re.match(
+                rf"^{re.escape(containers_indent)}connections\s*:\s*\{{\s*$",
+                lines[index],
+            )
+            for index in range(resource_start + 1, resource_end)
+            if not containers_index <= index <= containers_end
+        ):
+            continue
+        nested_index = next(
+            (
+                index
+                for index in range(containers_index + 1, containers_end)
+                if re.match(
+                    rf"^{re.escape(containers_indent)}  "
+                    r"connections\s*:\s*\{\s*$",
+                    lines[index],
+                )
+            ),
+            None,
+        )
+        if nested_index is None:
+            continue
+        nested_end = block_end(nested_index, containers_end + 1)
+        if nested_end is None:
+            continue
+        block = [
+            line[2:] if line.startswith("  ") else line
+            for line in lines[nested_index : nested_end + 1]
+        ]
+        del lines[nested_index : nested_end + 1]
+        containers_end -= nested_end - nested_index + 1
+        lines[containers_end + 1 : containers_end + 1] = block
+        changes.append({"resourceSymbol": symbol, "property": "connections"})
+
+    if changes:
+        source_path.write_text("".join(lines))
+    return list(reversed(changes))
+
+
 def reconcile_bicep_expressions(candidate: Path) -> list[dict[str, str]]:
     source_path = candidate / "app.bicep"
     source = source_path.read_text()
@@ -1889,6 +1971,7 @@ Expected/golden application definitions are unavailable.
                 "requirementChanges": [],
                 "bicepConfigChanges": [],
                 "sourceDefaultChanges": [],
+                "connectionShapeChanges": [],
                 "runtimeCompositeChanges": [],
                 "secretCompositeEnvChanges": [],
                 "optionalVersionChanges": [],
@@ -1903,6 +1986,9 @@ Expected/golden application definitions are unavailable.
                 candidate,
                 evidence,
                 authoring_contract,
+            )
+            reconciliation["connectionShapeChanges"] = (
+                reconcile_nested_connections(candidate)
             )
             reconciliation["optionalVersionChanges"] = (
                 reconcile_optional_versions(candidate, evidence)
@@ -2006,6 +2092,9 @@ candidate files.
                 candidate,
                 evidence,
                 authoring_contract,
+            )
+            reconciliation["connectionShapeChanges"] = (
+                reconcile_nested_connections(candidate)
             )
             reconciliation["optionalVersionChanges"] = (
                 reconcile_optional_versions(candidate, evidence)
