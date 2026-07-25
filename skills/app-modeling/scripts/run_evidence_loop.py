@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -330,15 +331,148 @@ def validate_evidence_candidate(
     return errors
 
 
+def startup_dockerfiles(
+    evidence: dict[str, Any],
+    item: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> list[Path]:
+    facts = evidence.get("facts")
+    names: set[str] = set()
+    workload_name = item.get("workload")
+    workloads = facts.get("workloads", []) if isinstance(facts, dict) else []
+    for workload in workloads:
+        if not isinstance(workload, dict) or workload.get("name") != workload_name:
+            continue
+        build = workload.get("build")
+        if isinstance(build, dict) and isinstance(build.get("dockerfile"), str):
+            names.add(build["dockerfile"])
+    citations = item.get("citation")
+    if isinstance(citations, str):
+        citations = [citations]
+    if isinstance(citations, list):
+        for citation in citations:
+            if not isinstance(citation, str):
+                continue
+            cited_name = re.sub(r":\d+(?:-\d+)?$", "", citation)
+            if "dockerfile" in Path(cited_name).name.lower():
+                names.add(cited_name)
+
+    paths = []
+    application_root = (
+        source_root if source_path in {"", "."} else source_root / source_path
+    )
+    for name in sorted(names):
+        for path in (application_root / name, source_root / name):
+            resolved = path.resolve()
+            try:
+                resolved.relative_to(source_root.resolve())
+            except ValueError:
+                continue
+            if resolved.is_file() and resolved not in paths:
+                paths.append(resolved)
+    return paths
+
+
+def image_provides_startup_file(
+    evidence: dict[str, Any],
+    item: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> bool:
+    path = item.get("path")
+    if not isinstance(path, str):
+        return False
+    for dockerfile in startup_dockerfiles(
+        evidence,
+        item,
+        source_root=source_root,
+        source_path=source_path,
+    ):
+        logical_source = re.sub(
+            r"\\\r?\n\s*",
+            " ",
+            dockerfile.read_text(errors="replace"),
+        )
+        for line in logical_source.splitlines():
+            match = re.match(r"^\s*(COPY|ADD)\s+(.+)$", line, re.IGNORECASE)
+            if not match:
+                continue
+            payload = match.group(2).strip()
+            try:
+                if payload.startswith("["):
+                    tokens = json.loads(payload)
+                else:
+                    tokens = shlex.split(payload, comments=True)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            tokens = [
+                str(token)
+                for token in tokens
+                if not str(token).startswith("--")
+            ]
+            if len(tokens) < 2:
+                continue
+            destination = tokens[-1]
+            sources = tokens[:-1]
+            if destination == path:
+                return True
+            if destination.endswith("/") and any(
+                destination + Path(source).name == path for source in sources
+            ):
+                return True
+    return False
+
+
+def reconcile_startup_file_delivery(
+    evidence: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> list[dict[str, str]]:
+    facts = evidence.get("facts")
+    startup_files = facts.get("startupFiles", []) if isinstance(facts, dict) else []
+    changes = []
+    for item in startup_files:
+        if not isinstance(item, dict) or item.get("delivery") != "image":
+            continue
+        if image_provides_startup_file(
+            evidence,
+            item,
+            source_root=source_root,
+            source_path=source_path,
+        ):
+            continue
+        item["delivery"] = "operatorConfig"
+        item.pop("presentInImage", None)
+        item["mechanicalReason"] = (
+            "selected Dockerfile does not COPY or ADD the required file"
+        )
+        changes.append(
+            {
+                "workload": str(item.get("workload", "")),
+                "path": str(item.get("path", "")),
+                "from": "image",
+                "to": "operatorConfig",
+            }
+        )
+    return changes
+
+
 def validate_startup_input_closure(
     candidate: Path,
     evidence: dict[str, Any],
+    *,
+    source_root: Path | None = None,
+    source_path: str = ".",
 ) -> list[dict[str, str]]:
     """Require every selected startup configuration file to be available."""
 
     source = (candidate / "app.bicep").read_text()
     facts = evidence.get("facts")
-    startup_inputs = facts.get("startupInputs", []) if isinstance(facts, dict) else []
+    startup_files = facts.get("startupFiles", []) if isinstance(facts, dict) else []
     errors: list[dict[str, str]] = []
     required_paths: set[str] = set()
 
@@ -351,7 +485,7 @@ def validate_startup_input_closure(
         )
         return any(re.search(pattern, source) for pattern in patterns)
 
-    for index, item in enumerate(startup_inputs):
+    for index, item in enumerate(startup_files):
         if not isinstance(item, dict) or item.get("required") is False:
             continue
         path = item.get("path")
@@ -360,12 +494,30 @@ def validate_startup_input_closure(
         required_paths.add(path)
         delivery = str(item.get("delivery", "")).strip()
         if delivery == "image" and item.get("presentInImage") is True:
+            if source_root is not None and image_provides_startup_file(
+                evidence,
+                item,
+                source_root=source_root,
+                source_path=source_path,
+            ):
+                continue
+            errors.append(
+                {
+                    "code": "STARTUP_IMAGE_PROOF",
+                    "path": f"$.sourceFacts.startupFiles[{index}]",
+                    "message": (
+                        f"Independent evidence claims {path} is image-provided, "
+                        "but the cited selected Dockerfile does not COPY or ADD "
+                        "that file."
+                    ),
+                }
+            )
             continue
         if not provisions(path):
             errors.append(
                 {
                     "code": "STARTUP_INPUT",
-                    "path": f"$.sourceFacts.startupInputs[{index}]",
+                    "path": f"$.sourceFacts.startupFiles[{index}]",
                     "message": (
                         f"Selected startup requires {path}, but the candidate "
                         "neither creates it before exec nor cites it as present "
@@ -382,7 +534,7 @@ def validate_startup_input_closure(
             errors.append(
                 {
                     "code": "STARTUP_INPUT_SECURITY",
-                    "path": f"$.sourceFacts.startupInputs[{index}]",
+                    "path": f"$.sourceFacts.startupFiles[{index}]",
                     "message": (
                         f"Operator-supplied startup configuration for {path} "
                         "must enter through a secure parameter and secretKeyRef."
@@ -422,6 +574,7 @@ def validate_all(
     *,
     remote: str,
     commit: str,
+    source_root: Path,
     source_path: str,
 ) -> dict[str, Any]:
     report = validate_candidate(
@@ -432,7 +585,14 @@ def validate_all(
         source_path=source_path,
     )
     report["errors"].extend(validate_evidence_candidate(candidate, evidence))
-    report["errors"].extend(validate_startup_input_closure(candidate, evidence))
+    report["errors"].extend(
+        validate_startup_input_closure(
+            candidate,
+            evidence,
+            source_root=source_root,
+            source_path=source_path,
+        )
+    )
     report["valid"] = not report["errors"]
     return report
 
@@ -720,28 +880,28 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
         facts = value["facts"]
         if not isinstance(facts.get("workloads"), list) or not facts["workloads"]:
             errors.append("facts.workloads must contain the selected workloads")
-        startup_inputs = facts.get("startupInputs")
-        if not isinstance(startup_inputs, list):
+        startup_files = facts.get("startupFiles")
+        if not isinstance(startup_files, list):
             errors.append(
-                "facts.startupInputs must list required startup files or be []"
+                "facts.startupFiles must list required startup files or be []"
             )
         else:
-            for index, item in enumerate(startup_inputs):
+            for index, item in enumerate(startup_files):
                 if not isinstance(item, dict):
-                    errors.append(f"facts.startupInputs[{index}] must be an object")
+                    errors.append(f"facts.startupFiles[{index}] must be an object")
                     continue
                 if not isinstance(item.get("workload"), str):
                     errors.append(
-                        f"facts.startupInputs[{index}].workload must be a string"
+                        f"facts.startupFiles[{index}].workload must be a string"
                     )
                 path = item.get("path")
                 if not isinstance(path, str) or not path.startswith("/"):
                     errors.append(
-                        f"facts.startupInputs[{index}].path must be absolute"
+                        f"facts.startupFiles[{index}].path must be absolute"
                     )
                 if item.get("required") is not True:
                     errors.append(
-                        f"facts.startupInputs[{index}].required must be true"
+                        f"facts.startupFiles[{index}].required must be true"
                     )
                 if item.get("delivery") not in {
                     "image",
@@ -749,18 +909,18 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
                     "operatorConfig",
                 }:
                     errors.append(
-                        f"facts.startupInputs[{index}].delivery is invalid"
+                        f"facts.startupFiles[{index}].delivery is invalid"
                     )
                 if not isinstance(item.get("citation"), str):
                     errors.append(
-                        f"facts.startupInputs[{index}].citation must be a string"
+                        f"facts.startupFiles[{index}].citation must be a string"
                     )
                 if (
                     item.get("delivery") == "image"
                     and item.get("presentInImage") is not True
                 ):
                     errors.append(
-                        f"facts.startupInputs[{index}] lacks image-presence proof"
+                        f"facts.startupFiles[{index}] lacks image-presence proof"
                     )
     if not isinstance(value.get("blockers"), list):
         errors.append("evidence blockers must be an array")
@@ -2034,7 +2194,7 @@ Expected/golden application definitions are unavailable.
                     + "; ".join(evidence_errors)
                     + ". Do not use tools. Restate the completed evidence as one "
                     "compact valid JSON object with status, blockers, and facts "
-                    "containing workloads, startupInputs, dependencies, route, "
+                    "containing workloads, startupFiles, dependencies, route, "
                     "and persistentPaths. Preserve all already closed citations."
                 )
             else:
@@ -2123,6 +2283,13 @@ Expected/golden application definitions are unavailable.
             "blockers": evidence.get("blockers", [])[:8],
             "errors": evidence_errors,
         }
+        startup_file_changes = reconcile_startup_file_delivery(
+            evidence,
+            source_root=repository_root,
+            source_path=source_path,
+        )
+        if startup_file_changes:
+            status["startupFileChanges"] = startup_file_changes
         write_json(run_dir / "reviewer-evidence.json", evidence)
         if evidence.get("status") in {"blocked", "needs_more_info", "conflict"}:
             status["reason"] = "independent evidence could not close the requested profile"
@@ -2247,6 +2414,7 @@ Expected/golden application definitions are unavailable.
                 evidence,
                 remote=remote,
                 commit=commit,
+                source_root=repository_root,
                 source_path=source_path,
             )
         )
@@ -2356,6 +2524,7 @@ candidate files.
                 evidence,
                 remote=remote,
                 commit=commit,
+                source_root=repository_root,
                 source_path=source_path,
             )
             write_json(run_dir / "validation-2.json", validation)

@@ -25,10 +25,10 @@ persistent paths. Return concise JSON facts with file-and-line evidence and
 explicit blockers.
 
 Trace each selected image's effective ENTRYPOINT and CMD. Put every required
-absolute startup configuration path in top-level `facts.startupInputs` as
+absolute startup configuration path in top-level `facts.startupFiles` as
 `{"workload":"...","path":"/...","required":true,
 "delivery":"image|runtimeGenerated|operatorConfig","presentInImage":true,
-"citation":"path:line"}`; return `startupInputs: []` only after proving the
+"citation":"path:line"}`; return `startupFiles: []` only after proving the
 selected process needs no file. Use `image` only when a cited clean-checkout
 COPY/ADD or exact release image proves the path is present. Use
 `runtimeGenerated` when cited source supplies complete selected-profile

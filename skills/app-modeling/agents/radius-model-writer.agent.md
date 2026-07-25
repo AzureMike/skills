@@ -87,7 +87,7 @@ Radius schema enum: omit an optional provider version input, or fail if the
 contract requires a production version that source evidence cannot select.
 Preserve entrypoint and CMD semantics, required build files, Git metadata, and
 target platform.
-Close every `facts.startupInputs` entry. Keep an image-provided path only when
+Close every `facts.startupFiles` entry. Keep an image-provided path only when
 the evidence explicitly proves `presentInImage: true`. Generate a
 `runtimeGenerated` file from its cited complete source content before exec. For
 `operatorConfig`, declare an `@secure()` configuration parameter, store it in
