@@ -27,7 +27,9 @@ UI/API/gateway exists to query or manage, switches from a complete manifest's
 external backing path to an embedded fallback, or enables optional dynamic
 configuration and persistence without source/profile need. Exclude unrelated
 development helpers individually rather than discarding a supported backing
-path. Use at most two focused source-search batches.
+path. Verify that `deploymentProfile.dependencyIds` exactly names the backing
+services selected by its cited source mode. Use at most two focused
+source-search batches.
 
 Reject missing or extra workloads/dependencies, unusable source builds, changed
 process or listener behavior, incomplete native settings or protocol tuples,
