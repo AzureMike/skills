@@ -1336,7 +1336,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=".")
     parser.add_argument("--request", required=True)
-    parser.add_argument("--deadline-seconds", type=float, default=360)
+    parser.add_argument("--deadline-seconds", type=float, default=390)
     parser.add_argument("--evidence-timeout", type=float, default=100)
     parser.add_argument("--author-timeout", type=float, default=95)
     parser.add_argument("--review-timeout", type=float, default=40)
@@ -1446,19 +1446,20 @@ Expected/golden application definitions are unavailable.
 """
     try:
         installed = install_agents(target)
+        evidence_prompt = (
+            "Independently derive cited source facts and select the profile "
+            "required by the user request. Do not inspect or select Radius "
+            "types; the parent resolves contracts after source facts close. "
+            "Return compact JSON with status, facts, and blockers. Do not "
+            "write files.\n" + common
+        )
         evidence_invocation = invoke(
             target=target,
             run_dir=run_dir,
             label="reviewer-evidence",
             agent="radius-model-reviewer",
             session_id=reviewer_session,
-            prompt=(
-                "Independently derive cited source facts and select the profile "
-                "required by the user request. Do not inspect or select Radius "
-                "types; the parent resolves contracts after source facts close. "
-                "Return compact JSON with status, facts, and blockers. Do not "
-                "write files.\n" + common
-            ),
+            prompt=evidence_prompt,
             timeout=min(args.evidence_timeout, remaining(deadline)),
             effort="low",
         )
@@ -1482,7 +1483,22 @@ Expected/golden application definitions are unavailable.
             "conflict",
         }
         if evidence_errors or evidence_blocked:
-            if evidence_errors:
+            infrastructure_retry = bool(
+                evidence_errors
+                and (
+                    evidence_invocation["timedOut"]
+                    or evidence_invocation["processExit"] != 0
+                )
+            )
+            if infrastructure_retry:
+                reviewer_session = str(uuid.uuid4())
+                retry_prompt = (
+                    "The prior source-review process ended without a valid "
+                    "handoff. Perform the source review once in this fresh "
+                    "session and return only the compact evidence JSON.\n"
+                    + evidence_prompt
+                )
+            elif evidence_errors:
                 retry_prompt = (
                     "Your evidence JSON was malformed or incomplete: "
                     + "; ".join(evidence_errors)
@@ -1504,12 +1520,19 @@ Expected/golden application definitions are unavailable.
             evidence_retry = invoke(
                 target=target,
                 run_dir=run_dir,
-                label="reviewer-evidence-retry",
+                label=(
+                    "reviewer-evidence-infra-retry"
+                    if infrastructure_retry
+                    else "reviewer-evidence-retry"
+                ),
                 agent="radius-model-reviewer",
                 session_id=reviewer_session,
                 prompt=retry_prompt,
-                timeout=min(40, remaining(deadline)),
-                resume=True,
+                timeout=min(
+                    args.evidence_timeout if infrastructure_retry else 40,
+                    remaining(deadline),
+                ),
+                resume=not infrastructure_retry,
                 effort="low",
             )
             status["evidenceRetry"] = public_invocation(evidence_retry)
@@ -1520,6 +1543,39 @@ Expected/golden application definitions are unavailable.
                 evidence_errors = validate_evidence(evidence)
             except ValueError as exc:
                 evidence_errors = [str(exc)]
+            if (
+                infrastructure_retry
+                and evidence_errors
+                and evidence_retry["processExit"] == 0
+                and remaining(deadline) > 10
+            ):
+                evidence_format_retry = invoke(
+                    target=target,
+                    run_dir=run_dir,
+                    label="reviewer-evidence-format-retry",
+                    agent="radius-model-reviewer",
+                    session_id=reviewer_session,
+                    prompt=(
+                        "Your completed evidence handoff was malformed: "
+                        + "; ".join(evidence_errors)
+                        + ". Do not use tools or change the facts. Restate it "
+                        "once as one compact valid JSON object with status, "
+                        "facts, and blockers."
+                    ),
+                    timeout=min(30, remaining(deadline)),
+                    resume=True,
+                    effort="low",
+                )
+                status["evidenceFormatRetry"] = public_invocation(
+                    evidence_format_retry
+                )
+                try:
+                    evidence = normalize_evidence(
+                        parse_json_object(evidence_format_retry["finalText"])
+                    )
+                    evidence_errors = validate_evidence(evidence)
+                except ValueError as exc:
+                    evidence_errors = [str(exc)]
             if evidence_retry["processExit"] != 0 and not evidence_errors:
                 status["evidenceRetryRecoveredFromExit"] = evidence_retry[
                     "processExit"
@@ -1565,27 +1621,25 @@ Expected/golden application definitions are unavailable.
             effort="low",
         )
         status["author"] = public_invocation(author_invocation)
-        writer_events = (
-            run_dir / "agents" / "writer-initial" / "events.jsonl"
-        )
         candidate_files = list(candidate.iterdir())
+        handoff_errors = validate_handoff(candidate)
         if (
-            author_invocation["processExit"] != 0
-            and writer_events.is_file()
-            and writer_events.stat().st_size == 0
-            and not candidate_files
+            handoff_errors
             and remaining(deadline) > 30
         ):
+            if candidate_files:
+                shutil.copytree(candidate, run_dir / "candidate-incomplete")
             writer_session = str(uuid.uuid4())
             author_invocation = invoke(
                 target=target,
                 run_dir=run_dir,
-                label="writer-infra-retry",
+                label="writer-handoff-retry",
                 agent="radius-model-writer",
                 session_id=writer_session,
                 prompt=(
-                    "The prior writer process produced no events or files. Author "
-                    "the four files directly under the Candidate directory from "
+                    "The prior writer process ended without a complete valid "
+                    "four-file handoff. Replace or complete the four files "
+                    "directly under the Candidate directory from "
                     f"{run_dir / 'reviewer-evidence.json'}, "
                     f"{run_dir / 'authoring-contract.json'}, and "
                     f"{SKILL_DIR / 'schemas' / 'requirements.schema.json'}. "
@@ -1595,7 +1649,7 @@ Expected/golden application definitions are unavailable.
                 effort="low",
             )
             status["authorRetry"] = public_invocation(author_invocation)
-        handoff_errors = validate_handoff(candidate)
+            handoff_errors = validate_handoff(candidate)
         if author_invocation["processExit"] != 0 and handoff_errors:
             status["authorHandoffErrors"] = handoff_errors[:8]
             status["reason"] = "author failed"
