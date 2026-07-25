@@ -462,6 +462,11 @@ Return only the required compact audit JSON.
             )
             status["auditCorrection"] = public_invocation(repair)
             corrected, repair_errors = parse_source_model(repair, contract)
+            status["auditCorrectionResult"] = {
+                "applied": not repair_errors and corrected["status"] == "complete",
+                "errors": repair_errors[:10],
+                "modelStatus": corrected.get("status"),
+            }
             if not repair_errors and corrected["status"] == "complete":
                 model = corrected
                 write_json(run_dir / "source-model.json", model)

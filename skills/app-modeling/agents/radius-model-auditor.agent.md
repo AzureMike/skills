@@ -53,12 +53,16 @@ Confine findings to the six judgements the model actually made:
 5. Delivery. Whether every environment name, file path and argument the model
    recorded is the name the application actually reads, quoted from source.
    Reject invented names.
-6. Inert and unnecessary settings. Whether a recorded setting would change
-   anything: reject one whose value the image already bakes in, one that
-   restates the default the application applies when the variable is unset,
-   and one enabling a subsystem needing storage, files or ports this
-   definition does not declare. Reject a `developerInput` for a value the
-   application runs without.
+6. Inert and unnecessary configuration. Whether a recorded application
+   setting would change anything: reject one whose value the image already
+   bakes in, one that restates the default the application applies when the
+   variable is unset, and one enabling a subsystem needing storage, files or
+   ports this definition does not declare. Reject a `developerInput` for a
+   value the application runs without. This covers application configuration
+   only. A dependency setting exists because the pinned contract requires that
+   slot for the connection to work, so it is never inert and is not yours to
+   remove; if you believe one is wrong, the finding is that it was
+   misclassified under 4, not that it is redundant.
 
 Cite the file and line you checked for every finding. Use at most two focused
 source-search batches. If the repository does not settle a question, say so
