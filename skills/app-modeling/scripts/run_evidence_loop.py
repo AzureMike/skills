@@ -500,6 +500,16 @@ def reconcile_startup_file_delivery(
     return changes
 
 
+def candidate_provisions_path(source: str, path: str) -> bool:
+    quoted_path = rf"['\"]?{re.escape(path)}['\"]?"
+    patterns = (
+        rf"\b(?:cat|printf)\b[\s\S]{{0,500}}?>\s*{quoted_path}",
+        rf"\btee(?:\s+-[A-Za-z]+)*\s+{quoted_path}",
+        rf"\b(?:cp|install)\b[^\n;]{{0,500}}\s+{quoted_path}",
+    )
+    return any(re.search(pattern, source) for pattern in patterns)
+
+
 def validate_startup_input_closure(
     candidate: Path,
     evidence: dict[str, Any],
@@ -514,15 +524,6 @@ def validate_startup_input_closure(
     startup_files = facts.get("startupFiles", []) if isinstance(facts, dict) else []
     errors: list[dict[str, str]] = []
     required_paths: set[str] = set()
-
-    def provisions(path: str) -> bool:
-        quoted_path = rf"['\"]?{re.escape(path)}['\"]?"
-        patterns = (
-            rf"\b(?:cat|printf)\b[\s\S]{{0,500}}?>\s*{quoted_path}",
-            rf"\btee(?:\s+-[A-Za-z]+)*\s+{quoted_path}",
-            rf"\b(?:cp|install)\b[^\n;]{{0,500}}\s+{quoted_path}",
-        )
-        return any(re.search(pattern, source) for pattern in patterns)
 
     for index, item in enumerate(startup_files):
         if not isinstance(item, dict) or item.get("required") is False:
@@ -559,7 +560,7 @@ def validate_startup_input_closure(
                 }
             )
             continue
-        if not provisions(path):
+        if not candidate_provisions_path(source, path):
             errors.append(
                 {
                     "code": "STARTUP_INPUT",
@@ -597,7 +598,7 @@ def validate_startup_input_closure(
         )
     )
     for path in sorted(referenced_paths - required_paths):
-        if provisions(path):
+        if candidate_provisions_path(source, path):
             continue
         errors.append(
             {
@@ -1624,16 +1625,39 @@ def upper_snake(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", separated).strip("_").upper()
 
 
-def evidence_process(evidence: dict[str, Any]) -> str | None:
+def shell_process(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if not isinstance(value, list) or not value:
+        return None
+    if not all(isinstance(item, str) and item for item in value):
+        return None
+    return " ".join(
+        item
+        if re.fullmatch(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})", item)
+        else shlex.quote(item)
+        for item in value
+    )
+
+
+def evidence_process(
+    evidence: dict[str, Any],
+    workload: str | None = None,
+) -> str | None:
+    def normalize(value: Any) -> str | None:
+        if isinstance(value, str):
+            return value.strip() or None
+        if not isinstance(value, dict):
+            return None
+        command = shell_process(value.get("command"))
+        args = shell_process(value.get("args"))
+        return " ".join(item for item in (command, args) if item) or None
+
     def find(value: Any) -> str | None:
         if isinstance(value, dict):
-            process = value.get("process")
-            if isinstance(process, str) and process.strip():
-                return process.strip()
-            if isinstance(process, dict):
-                command = process.get("command")
-                if isinstance(command, str) and command.strip():
-                    return command.strip()
+            process = normalize(value.get("process"))
+            if process:
+                return process
             for item in value.values():
                 found = find(item)
                 if found:
@@ -1645,6 +1669,31 @@ def evidence_process(evidence: dict[str, Any]) -> str | None:
                     return found
         return None
 
+    facts = evidence.get("facts")
+    workloads = facts.get("workloads") if isinstance(facts, dict) else None
+    if isinstance(workloads, dict):
+        workloads = [workloads]
+    if isinstance(workloads, list):
+        eligible = [item for item in workloads if isinstance(item, dict)]
+        if workload:
+            matching = [
+                item
+                for item in eligible
+                if workload
+                in {
+                    str(item.get("name", "")),
+                    str(item.get("workload", "")),
+                    str(item.get("service", "")),
+                }
+            ]
+            if matching:
+                return find(matching[0])
+            if len(eligible) != 1:
+                return None
+        if eligible:
+            found = find(eligible[0])
+            if found:
+                return found
     found = find(evidence)
     if found:
         return found
@@ -1663,7 +1712,8 @@ def insert_runtime_command(
     command: str,
 ) -> str | None:
     key_pattern = re.compile(
-        rf"(?m)^(\s*){re.escape(composite_key)}(\s*:\s*\{{\s*)$"
+        rf"(?m)^(\s*)(?:['\"])?{re.escape(composite_key)}(?:['\"])?"
+        r"(\s*:\s*\{\s*)$"
     )
     match = key_pattern.search(source)
     if match:
@@ -1671,7 +1721,8 @@ def insert_runtime_command(
             f"{match.group(1)}{secret_key}{match.group(2)}"
         ) + source[match.end() :]
     elif re.search(
-        rf"(?m)^\s*{re.escape(secret_key)}\s*:\s*\{{\s*$",
+        rf"(?m)^\s*(?:['\"])?{re.escape(secret_key)}(?:['\"])?"
+        r"\s*:\s*\{\s*$",
         source,
     ):
         renamed = source
@@ -1682,7 +1733,11 @@ def insert_runtime_command(
         (
             index
             for index, line in enumerate(lines)
-            if re.match(rf"^\s*{re.escape(secret_key)}\s*:\s*\{{\s*$", line)
+            if re.match(
+                rf"^\s*(?:['\"])?{re.escape(secret_key)}(?:['\"])?"
+                r"\s*:\s*\{\s*$",
+                line,
+            )
         ),
         None,
     )
@@ -1741,7 +1796,11 @@ def insert_runtime_command(
         (
             index
             for index, line in enumerate(lines)
-            if re.match(rf"^\s*{re.escape(secret_key)}\s*:\s*\{{\s*$", line)
+            if re.match(
+                rf"^\s*(?:['\"])?{re.escape(secret_key)}(?:['\"])?"
+                r"\s*:\s*\{\s*$",
+                line,
+            )
         ),
         None,
     )
@@ -1769,6 +1828,215 @@ def insert_runtime_command(
     )
     lines.insert(env_index, block)
     return "".join(lines)
+
+
+def decode_bicep_single_quoted(value: str) -> str:
+    decoded: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            index += 1
+        decoded.append(value[index])
+        index += 1
+    return "".join(decoded)
+
+
+def candidate_runtime_command(source: str, environment_key: str) -> str | None:
+    lines = source.splitlines(keepends=True)
+    key_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.match(
+                rf"^\s*(?:['\"])?{re.escape(environment_key)}(?:['\"])?"
+                r"\s*:\s*\{\s*$",
+                line,
+            )
+        ),
+        None,
+    )
+    if key_index is None:
+        return None
+    env_index = next(
+        (
+            index
+            for index in range(key_index - 1, -1, -1)
+            if re.match(r"^\s*env\s*:\s*\{\s*$", lines[index])
+        ),
+        None,
+    )
+    if env_index is None:
+        return None
+    env_indent = re.match(r"^(\s*)", lines[env_index]).group(1)
+    container_indent = env_indent[:-2] if len(env_indent) >= 2 else ""
+    container_index = next(
+        (
+            index
+            for index in range(env_index - 1, -1, -1)
+            if re.match(
+                rf"^{re.escape(container_indent)}(?:"
+                r"[A-Za-z_][A-Za-z0-9_-]*|'[^']+'|\"[^\"]+\""
+                r")\s*:\s*\{\s*$",
+                lines[index],
+            )
+        ),
+        None,
+    )
+    if container_index is None:
+        return None
+    args_index = next(
+        (
+            index
+            for index in range(env_index - 1, container_index, -1)
+            if re.match(rf"^{re.escape(env_indent)}args\s*:\s*\[", lines[index])
+        ),
+        None,
+    )
+    if args_index is None:
+        return None
+    depth = 0
+    args_end = args_index
+    while args_end < env_index:
+        depth += lines[args_end].count("[") - lines[args_end].count("]")
+        if depth == 0:
+            break
+        args_end += 1
+    if depth != 0:
+        return None
+    payload = "".join(lines[args_index + 1 : args_end])
+    match = re.fullmatch(r"\s*'((?:\\.|[^'])*)'\s*", payload)
+    if not match:
+        return None
+    return decode_bicep_single_quoted(match.group(1))
+
+
+def secret_key_ref_environment_keys(source: str) -> set[str]:
+    lines = source.splitlines()
+    keys: set[str] = set()
+    for env_index, line in enumerate(lines):
+        match = re.match(r"^(\s*)env\s*:\s*\{\s*$", line)
+        if not match:
+            continue
+        env_indent = match.group(1)
+        key_indent = env_indent + "  "
+        depth = 0
+        env_end = None
+        for index in range(env_index, len(lines)):
+            depth += lines[index].count("{") - lines[index].count("}")
+            if index > env_index and depth == 0:
+                env_end = index
+                break
+        if env_end is None:
+            continue
+        index = env_index + 1
+        while index < env_end:
+            key_match = re.match(
+                rf"^{re.escape(key_indent)}(?:'([^']+)'|\"([^\"]+)\"|"
+                r"([A-Za-z_][A-Za-z0-9_]*))\s*:\s*\{\s*$",
+                lines[index],
+            )
+            if not key_match:
+                index += 1
+                continue
+            key_depth = 0
+            key_end = index
+            while key_end < env_end:
+                key_depth += (
+                    lines[key_end].count("{") - lines[key_end].count("}")
+                )
+                if key_end > index and key_depth == 0:
+                    break
+                key_end += 1
+            block = "\n".join(lines[index : key_end + 1])
+            if "secretKeyRef:" in block:
+                keys.add(next(item for item in key_match.groups() if item))
+            index = key_end + 1
+    return keys
+
+
+def reconcile_operator_startup_files(
+    candidate: Path,
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    facts = evidence.get("facts")
+    startup_files = facts.get("startupFiles", []) if isinstance(facts, dict) else []
+    source_path = candidate / "app.bicep"
+    source = source_path.read_text()
+    available_keys = secret_key_ref_environment_keys(source)
+    changes: list[dict[str, str]] = []
+
+    for item in startup_files:
+        if (
+            not isinstance(item, dict)
+            or item.get("required") is False
+            or item.get("delivery") != "operatorConfig"
+        ):
+            continue
+        path = item.get("path")
+        workload = item.get("workload")
+        if (
+            not isinstance(path, str)
+            or not path.startswith("/")
+            or candidate_provisions_path(source, path)
+        ):
+            continue
+        process = evidence_process(
+            evidence,
+            workload if isinstance(workload, str) else None,
+        )
+        if not process or path not in process:
+            continue
+
+        tokens = {
+            token
+            for value in (Path(path).stem, workload)
+            if isinstance(value, str)
+            for token in upper_snake(value).split("_")
+            if token
+        }
+        ranked = sorted(
+            (
+                (
+                    sum(token in upper_snake(key).split("_") for token in tokens)
+                    + (1 if "CONFIG" in upper_snake(key).split("_") else 0),
+                    key,
+                )
+                for key in available_keys
+            ),
+            reverse=True,
+        )
+        if not ranked:
+            continue
+        best_score = ranked[0][0]
+        best = [key for score, key in ranked if score == best_score]
+        if len(best) != 1 or (best_score == 0 and len(available_keys) != 1):
+            continue
+        environment_key = best[0]
+        existing = candidate_runtime_command(source, environment_key)
+        base_command = existing if existing and process in existing else f"exec {process}"
+        command = (
+            f"printf '%s' \"${environment_key}\" > {shlex.quote(path)}"
+            f" && {base_command}"
+        )
+        rewritten = insert_runtime_command(
+            source,
+            composite_key=environment_key,
+            secret_key=environment_key,
+            command=command,
+        )
+        if rewritten is None:
+            continue
+        source = rewritten
+        changes.append(
+            {
+                "workload": str(workload or ""),
+                "path": path,
+                "secretEnvironment": environment_key,
+            }
+        )
+    if changes:
+        source_path.write_text(source)
+    return changes
 
 
 def reconcile_stale_secret_composite_env(
@@ -2474,6 +2742,7 @@ Expected/golden application definitions are unavailable.
                 "sourceDefaultChanges": [],
                 "connectionShapeChanges": [],
                 "runtimeCompositeChanges": [],
+                "startupFileChanges": [],
                 "exportedRuntimeChanges": [],
                 "secretCompositeEnvChanges": [],
                 "optionalVersionChanges": [],
@@ -2507,6 +2776,9 @@ Expected/golden application definitions are unavailable.
                     authoring_contract,
                     evidence,
                 )
+            )
+            reconciliation["startupFileChanges"] = (
+                reconcile_operator_startup_files(candidate, evidence)
             )
             reconciliation["exportedRuntimeChanges"] = (
                 reconcile_exported_runtime_settings(
@@ -2620,6 +2892,9 @@ candidate files.
                     authoring_contract,
                     evidence,
                 )
+            )
+            reconciliation["startupFileChanges"] = (
+                reconcile_operator_startup_files(candidate, evidence)
             )
             reconciliation["exportedRuntimeChanges"] = (
                 reconcile_exported_runtime_settings(
