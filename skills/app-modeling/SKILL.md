@@ -66,10 +66,10 @@ artifact directory.
 - Bind every workload dependency with both its native runtime configuration
   and a Radius connection; disable generic projection when source does not
   consume it.
-- Pass developer-supplied credentials through `@secure()` parameters. When a
-  container consumes one, store it in an authored `Radius.Security/secrets`
-  resource and use `valueFrom.secretKeyRef`. Bind Recipe-generated credentials
-  directly from their verified managed secret name and key.
+- Pass developer-supplied credentials through `@secure()` parameters. Bind a
+  credential the Recipe generates directly from its managed secret name and
+  key, never by copying the value into the definition. Both forms are rendered
+  from the contract, so no secret is authored by hand.
 - Treat every Bicep diagnostic, including warnings, as failure.
 
 ## Response
