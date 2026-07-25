@@ -40,7 +40,8 @@ Confine findings to the six judgements the model actually made:
 1. The workload. Whether the selected Dockerfile builds the application this
    repository publishes, rather than a test fixture, development helper,
    benchmark or tooling image, and whether the effective process and listeners
-   match the ones the image really starts.
+   match the ones the image really starts. An explicit process that restates
+   the image's own entrypoint is a fault: it should be the image default.
 2. The image. Whether the selected Dockerfile can be built from a clean
    checkout at this revision. A Dockerfile that copies a prebuilt artifact
    produced by an earlier release step cannot, and must be recorded as a

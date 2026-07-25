@@ -63,8 +63,11 @@ For every workload:
   that proves it. Prefer building: a published image is the exception. A
   non-default Docker build target is unsupported and must be a blocker.
 - Trace the effective image ENTRYPOINT/CMD. Use `process.kind: imageDefault`
-  only when no runtime wrapper can be required. Otherwise record the exact
-  source process as argv or shell without changing it.
+  whenever the container should run what the image already starts, including
+  when you have traced that command exactly: restating it overrides the image
+  with a copy of itself, and then silently freezes it if the image changes.
+  Record an explicit argv or shell process only when this deployment must run
+  something the image does not already run, and say what differs.
 - Record every listener and only externally required routes.
 - Record source-native nondependency environment configuration, but only where
   it changes this deployment. Before recording a setting, ask what would
