@@ -1338,7 +1338,7 @@ def main() -> int:
     parser.add_argument("--request", required=True)
     parser.add_argument("--deadline-seconds", type=float, default=390)
     parser.add_argument("--evidence-timeout", type=float, default=100)
-    parser.add_argument("--author-timeout", type=float, default=95)
+    parser.add_argument("--author-timeout", type=float, default=200)
     parser.add_argument("--review-timeout", type=float, default=40)
     parser.add_argument("--repair-timeout", type=float, default=55)
     parser.add_argument("--final-review-timeout", type=float, default=40)
