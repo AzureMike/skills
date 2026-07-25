@@ -43,8 +43,9 @@ absolute startup configuration path in top-level `facts.startupFiles` as
 selected process needs no file. Use `image` only when a cited clean-checkout
 COPY/ADD or exact release image proves the path is present and a separate
 content citation proves the request or canonical production profile selected
-that configuration. A bundled default, smoke, stdin/stdout, or example config
-is not a canonical production selection. Use
+that configuration. Do not list the executable, JAR, shared library, or other
+program artifact as a startup configuration file. A bundled default, smoke,
+stdin/stdout, or example config is not a canonical production selection. Use
 `runtimeGenerated` when cited source supplies complete selected-profile
 content. For a configurable engine whose required configuration is deliberately
 operator-defined and the request selects no complete repository profile, use

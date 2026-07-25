@@ -343,11 +343,30 @@ def startup_dockerfiles(
     workload_name = item.get("workload")
     workloads = facts.get("workloads", []) if isinstance(facts, dict) else []
     for workload in workloads:
-        if not isinstance(workload, dict) or workload.get("name") != workload_name:
+        if not isinstance(workload, dict) or workload_name not in {
+            workload.get("name"),
+            workload.get("workload"),
+            workload.get("service"),
+        }:
             continue
         build = workload.get("build")
         if isinstance(build, dict) and isinstance(build.get("dockerfile"), str):
             names.add(build["dockerfile"])
+        citations = []
+        for raw_citations in (
+            build.get("citations") if isinstance(build, dict) else None,
+            workload.get("citations"),
+        ):
+            if isinstance(raw_citations, str):
+                citations.append(raw_citations)
+            elif isinstance(raw_citations, list):
+                citations.extend(raw_citations)
+        for citation in citations:
+            if not isinstance(citation, str):
+                continue
+            cited_name = re.sub(r":\d+(?:-\d+)?$", "", citation)
+            if "dockerfile" in Path(cited_name).name.lower():
+                names.add(cited_name)
     citations = item.get("citation")
     if isinstance(citations, str):
         citations = [citations]
@@ -373,6 +392,267 @@ def startup_dockerfiles(
             if resolved.is_file() and resolved not in paths:
                 paths.append(resolved)
     return paths
+
+
+def dockerfile_effective_process(
+    dockerfile: Path,
+) -> tuple[Any, set[str], set[str], int | None]:
+    instructions: list[tuple[int, str, str]] = []
+    buffer = ""
+    start = 0
+    for line_number, raw_line in enumerate(
+        dockerfile.read_text(errors="replace").splitlines(),
+        start=1,
+    ):
+        if not buffer:
+            start = line_number
+        stripped = raw_line.rstrip()
+        continued = stripped.endswith("\\")
+        buffer += stripped[:-1] + " " if continued else stripped
+        if continued:
+            continue
+        match = re.match(r"^\s*([A-Za-z]+)\s+(.+?)\s*$", buffer)
+        if match:
+            instructions.append((start, match.group(1).upper(), match.group(2)))
+        buffer = ""
+
+    entrypoint: Any = None
+    command: Any = None
+    command_line: int | None = None
+    for line_number, instruction, payload in instructions:
+        if instruction == "FROM":
+            entrypoint = None
+            command = None
+            command_line = None
+            continue
+        if instruction not in {"ENTRYPOINT", "CMD"}:
+            continue
+        try:
+            value = json.loads(payload) if payload.startswith("[") else payload
+        except json.JSONDecodeError:
+            continue
+        if instruction == "ENTRYPOINT":
+            entrypoint = value
+        else:
+            command = value
+            command_line = line_number
+
+    if isinstance(entrypoint, list):
+        process: Any = list(entrypoint)
+        if isinstance(command, list):
+            process.extend(command)
+        elif isinstance(command, str) and command.strip():
+            process.extend(["/bin/sh", "-c", command.strip()])
+    elif isinstance(entrypoint, str) and entrypoint.strip():
+        suffix = shell_process(command)
+        process = " ".join(
+            item for item in (entrypoint.strip(), suffix) if item
+        )
+    else:
+        process = command
+
+    tokens: list[str]
+    if isinstance(process, list):
+        tokens = [item for item in process if isinstance(item, str)]
+    elif isinstance(process, str):
+        try:
+            tokens = shlex.split(process)
+        except ValueError:
+            tokens = []
+    else:
+        tokens = []
+
+    config_paths: set[str] = set()
+    artifacts: set[str] = set()
+    if tokens and tokens[0].startswith("/"):
+        artifacts.add(tokens[0])
+    config_flags = {
+        "-c",
+        "-f",
+        "--config",
+        "--config-file",
+        "--configuration",
+        "--settings",
+    }
+    artifact_flags = {"-jar", "--jar"}
+    command_interpreters = {"ash", "bash", "dash", "sh", "zsh"}
+    executable = Path(tokens[0]).name if tokens else ""
+    for index, token in enumerate(tokens):
+        if (
+            token in config_flags
+            and index + 1 < len(tokens)
+            and not (token == "-c" and executable in command_interpreters)
+        ):
+            path = tokens[index + 1]
+            if path.startswith("/"):
+                config_paths.add(path)
+        elif any(
+            token.startswith(prefix)
+            for prefix in (
+                "--config=",
+                "--config-file=",
+                "--configuration=",
+                "--settings=",
+            )
+        ):
+            path = token.split("=", 1)[1]
+            if path.startswith("/"):
+                config_paths.add(path)
+        elif token in artifact_flags and index + 1 < len(tokens):
+            artifacts.add(tokens[index + 1])
+    return process, config_paths, artifacts, command_line
+
+
+def same_process_path(path: str, process_path: str) -> bool:
+    return path == process_path or (
+        not process_path.startswith("/")
+        and Path(path).name == Path(process_path).name
+    )
+
+
+def reconcile_source_startup_facts(
+    evidence: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> list[dict[str, str]]:
+    facts = evidence.get("facts")
+    workloads = facts.get("workloads", []) if isinstance(facts, dict) else []
+    startup_files = facts.get("startupFiles") if isinstance(facts, dict) else None
+    if not isinstance(workloads, list) or not isinstance(startup_files, list):
+        return []
+
+    changes: list[dict[str, str]] = []
+    process_details: dict[str, tuple[Any, set[str], set[str], str]] = {}
+    for workload in workloads:
+        if not isinstance(workload, dict):
+            continue
+        name = str(
+            workload.get(
+                "name",
+                workload.get("workload", workload.get("service", "")),
+            )
+        )
+        if not name:
+            continue
+        dockerfiles = startup_dockerfiles(
+            evidence,
+            {
+                "workload": name,
+                "citation": workload.get("citations", []),
+            },
+            source_root=source_root,
+            source_path=source_path,
+        )
+        if len(dockerfiles) != 1:
+            continue
+        dockerfile = dockerfiles[0]
+        process, config_paths, artifacts, command_line = (
+            dockerfile_effective_process(dockerfile)
+        )
+        if not process:
+            continue
+        try:
+            relative = dockerfile.resolve().relative_to(source_root.resolve())
+        except ValueError:
+            continue
+        citation = (
+            f"{relative.as_posix()}:{command_line}"
+            if command_line is not None
+            else relative.as_posix()
+        )
+        prior = evidence_process(
+            {"facts": {"workloads": [workload]}},
+            name,
+        )
+        derived = shell_process(process)
+        if derived and prior != derived:
+            workload["process"] = process
+            changes.append(
+                {
+                    "workload": name,
+                    "property": "process",
+                    "source": citation,
+                }
+            )
+        process_details[name] = (process, config_paths, artifacts, citation)
+
+    single_workload = next(
+        (
+            str(
+                item.get(
+                    "name",
+                    item.get("workload", item.get("service", "")),
+                )
+            )
+            for item in workloads
+            if isinstance(item, dict)
+        ),
+        "",
+    ) if len([item for item in workloads if isinstance(item, dict)]) == 1 else ""
+
+    retained: list[Any] = []
+    for item in startup_files:
+        if not isinstance(item, dict):
+            retained.append(item)
+            continue
+        if not isinstance(item.get("workload"), str) and single_workload:
+            item["workload"] = single_workload
+        name = item.get("workload")
+        path = item.get("path")
+        detail = process_details.get(name) if isinstance(name, str) else None
+        if not detail or not isinstance(path, str):
+            retained.append(item)
+            continue
+        _, config_paths, artifacts, citation = detail
+        if any(same_process_path(path, artifact) for artifact in artifacts):
+            changes.append(
+                {
+                    "workload": name,
+                    "property": "startupFiles",
+                    "removedArtifact": path,
+                }
+            )
+            continue
+        if path in config_paths and not isinstance(item.get("citation"), str):
+            item["citation"] = citation
+        retained.append(item)
+    startup_files[:] = retained
+
+    known = {
+        (item.get("workload"), item.get("path"))
+        for item in startup_files
+        if isinstance(item, dict)
+    }
+    for name, (_, config_paths, _, citation) in process_details.items():
+        for path in sorted(config_paths):
+            if (name, path) in known:
+                continue
+            item = {
+                "workload": name,
+                "path": path,
+                "required": True,
+                "delivery": "image",
+                "presentInImage": True,
+                "citation": citation,
+            }
+            if not image_provides_startup_file(
+                evidence,
+                item,
+                source_root=source_root,
+                source_path=source_path,
+            ):
+                item["delivery"] = "operatorConfig"
+                item.pop("presentInImage")
+            startup_files.append(item)
+            changes.append(
+                {
+                    "workload": name,
+                    "property": "startupFiles",
+                    "addedConfig": path,
+                }
+            )
+    return changes
 
 
 def image_provides_startup_file(
@@ -1116,6 +1396,21 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
     if not isinstance(value.get("blockers"), list):
         errors.append("evidence blockers must be an array")
     return errors
+
+
+def prepare_evidence(
+    value: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> tuple[dict[str, Any], list[str], list[dict[str, str]]]:
+    evidence = normalize_evidence(value)
+    changes = reconcile_source_startup_facts(
+        evidence,
+        source_root=source_root,
+        source_path=source_path,
+    )
+    return evidence, validate_evidence(evidence), changes
 
 
 def reconcile_requirements(
@@ -1863,48 +2158,58 @@ def insert_runtime_command(
     secret_key: str,
     command: str,
 ) -> str | None:
-    key_pattern = re.compile(
-        rf"(?m)^(\s*)(?:['\"])?{re.escape(composite_key)}(?:['\"])?"
-        r"(\s*:\s*\{\s*)$"
-    )
-    match = key_pattern.search(source)
-    if match:
-        renamed = source[: match.start()] + (
-            f"{match.group(1)}{secret_key}{match.group(2)}"
-        ) + source[match.end() :]
-    elif re.search(
-        rf"(?m)^\s*(?:['\"])?{re.escape(secret_key)}(?:['\"])?"
-        r"\s*:\s*\{\s*$",
-        source,
-    ):
-        renamed = source
-    else:
+    def find_environment_key(
+        lines: list[str],
+        names: tuple[str, ...],
+    ) -> tuple[int, int, str] | None:
+        for env_index, line in enumerate(lines):
+            match = re.match(r"^(\s*)env\s*:\s*\{\s*$", line)
+            if not match:
+                continue
+            env_indent = match.group(1)
+            key_indent = env_indent + "  "
+            depth = 0
+            env_end = None
+            for index in range(env_index, len(lines)):
+                depth += lines[index].count("{") - lines[index].count("}")
+                if index > env_index and depth == 0:
+                    env_end = index
+                    break
+            if env_end is None:
+                continue
+            for name in names:
+                pattern = re.compile(
+                    rf"^{re.escape(key_indent)}(?:['\"])?"
+                    rf"{re.escape(name)}(?:['\"])?\s*:\s*\{{\s*$"
+                )
+                key_index = next(
+                    (
+                        index
+                        for index in range(env_index + 1, env_end)
+                        if pattern.match(lines[index])
+                    ),
+                    None,
+                )
+                if key_index is not None:
+                    return env_index, key_index, env_indent
         return None
-    lines = renamed.splitlines(keepends=True)
-    secret_index = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if re.match(
-                rf"^\s*(?:['\"])?{re.escape(secret_key)}(?:['\"])?"
-                r"\s*:\s*\{\s*$",
-                line,
-            )
-        ),
-        None,
-    )
-    if secret_index is None:
+
+    lines = source.splitlines(keepends=True)
+    located = find_environment_key(lines, (secret_key, composite_key))
+    if located is None:
         return None
-    env_index = next(
-        (
-            index
-            for index in range(secret_index - 1, -1, -1)
-            if re.match(r"^\s*env\s*:\s*\{\s*$", lines[index])
-        ),
-        None,
-    )
-    if env_index is None:
-        return None
+    env_index, key_index, env_indent = located
+    if secret_key != composite_key:
+        key_match = re.match(
+            r"^(\s*)(?:['\"])?[^:'\"]+(?:['\"])?(\s*:\s*\{\s*)$",
+            lines[key_index],
+        )
+        if key_match is None:
+            return None
+        lines[key_index] = (
+            f"{key_match.group(1)}{secret_key}{key_match.group(2)}"
+        )
+
     env_indent = re.match(r"^(\s*)", lines[env_index]).group(1)
     container_indent = env_indent[:-2] if len(env_indent) >= 2 else ""
     container_index = next(
@@ -1944,30 +2249,10 @@ def insert_runtime_command(
         index = end + 1
     for start, end in reversed(ranges):
         del lines[start:end]
-    secret_index = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if re.match(
-                rf"^\s*(?:['\"])?{re.escape(secret_key)}(?:['\"])?"
-                r"\s*:\s*\{\s*$",
-                line,
-            )
-        ),
-        None,
-    )
-    if secret_index is None:
+    located = find_environment_key(lines, (secret_key,))
+    if located is None:
         return None
-    env_index = next(
-        (
-            index
-            for index in range(secret_index - 1, -1, -1)
-            if re.match(r"^\s*env\s*:\s*\{\s*$", lines[index])
-        ),
-        None,
-    )
-    if env_index is None:
-        return None
+    env_index, _, env_indent = located
     encoded = bicep_single_quoted(command)
     block = (
         f"{env_indent}command: [\n"
@@ -2712,13 +2997,15 @@ Expected/golden application definitions are unavailable.
             evidence_invocation["finalText"] + "\n"
         )
         try:
-            evidence = normalize_evidence(
-                parse_json_object(evidence_invocation["finalText"])
+            evidence, evidence_errors, source_startup_changes = prepare_evidence(
+                parse_json_object(evidence_invocation["finalText"]),
+                source_root=repository_root,
+                source_path=source_path,
             )
-            evidence_errors = validate_evidence(evidence)
         except ValueError as exc:
             evidence = {}
             evidence_errors = [str(exc)]
+            source_startup_changes = []
         if evidence_invocation["processExit"] != 0 and not evidence_errors:
             status["evidenceRecoveredFromExit"] = evidence_invocation["processExit"]
         evidence_blocked = evidence.get("status") in {
@@ -2781,10 +3068,13 @@ Expected/golden application definitions are unavailable.
             )
             status["evidenceRetry"] = public_invocation(evidence_retry)
             try:
-                evidence = normalize_evidence(
-                    parse_json_object(evidence_retry["finalText"])
+                evidence, evidence_errors, source_startup_changes = (
+                    prepare_evidence(
+                        parse_json_object(evidence_retry["finalText"]),
+                        source_root=repository_root,
+                        source_path=source_path,
+                    )
                 )
-                evidence_errors = validate_evidence(evidence)
             except ValueError as exc:
                 evidence_errors = [str(exc)]
             if (
@@ -2814,10 +3104,15 @@ Expected/golden application definitions are unavailable.
                     evidence_format_retry
                 )
                 try:
-                    evidence = normalize_evidence(
-                        parse_json_object(evidence_format_retry["finalText"])
+                    evidence, evidence_errors, source_startup_changes = (
+                        prepare_evidence(
+                            parse_json_object(
+                                evidence_format_retry["finalText"]
+                            ),
+                            source_root=repository_root,
+                            source_path=source_path,
+                        )
                     )
-                    evidence_errors = validate_evidence(evidence)
                 except ValueError as exc:
                     evidence_errors = [str(exc)]
             if evidence_retry["processExit"] != 0 and not evidence_errors:
@@ -2837,6 +3132,8 @@ Expected/golden application definitions are unavailable.
             "blockers": evidence.get("blockers", [])[:8],
             "errors": evidence_errors,
         }
+        if source_startup_changes:
+            status["sourceStartupChanges"] = source_startup_changes
         startup_file_changes = reconcile_startup_file_delivery(
             evidence,
             source_root=repository_root,
