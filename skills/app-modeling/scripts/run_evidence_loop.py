@@ -596,6 +596,7 @@ def reconcile_source_startup_facts(
         if not isinstance(item, dict):
             retained.append(item)
             continue
+        item.pop("processArgument", None)
         if not isinstance(item.get("workload"), str) and single_workload:
             item["workload"] = single_workload
         name = item.get("workload")
@@ -614,8 +615,10 @@ def reconcile_source_startup_facts(
                 }
             )
             continue
-        if path in config_paths and not isinstance(item.get("citation"), str):
-            item["citation"] = citation
+        if path in config_paths:
+            item["processArgument"] = True
+            if not isinstance(item.get("citation"), str):
+                item["citation"] = citation
         retained.append(item)
     startup_files[:] = retained
 
@@ -635,6 +638,7 @@ def reconcile_source_startup_facts(
                 "delivery": "image",
                 "presentInImage": True,
                 "citation": citation,
+                "processArgument": True,
             }
             if not image_provides_startup_file(
                 evidence,
@@ -833,9 +837,23 @@ def reconcile_operator_materialized_paths(
     facts = evidence.get("facts")
     startup_files = facts.get("startupFiles", []) if isinstance(facts, dict) else []
     changes: list[dict[str, str]] = []
+    stdin_candidates: dict[str, int] = {}
+    for item in startup_files:
+        if (
+            isinstance(item, dict)
+            and item.get("delivery") == "operatorConfig"
+            and item.get("processArgument") is True
+            and isinstance(item.get("workload"), str)
+        ):
+            workload_name = item["workload"]
+            stdin_candidates[workload_name] = (
+                stdin_candidates.get(workload_name, 0) + 1
+            )
     for item in startup_files:
         if not isinstance(item, dict) or item.get("delivery") != "operatorConfig":
             continue
+        item.pop("materializedPath", None)
+        item.pop("transport", None)
         path = item.get("path")
         workload_name = item.get("workload")
         if not isinstance(path, str) or not isinstance(workload_name, str):
@@ -843,12 +861,28 @@ def reconcile_operator_materialized_paths(
         directories = writable_directories(workload_facts(evidence, workload_name))
         if any(path_is_within(path, directory) for directory in directories):
             item["materializedPath"] = path
+            item["transport"] = "file"
             continue
         directory = next((value for value in directories if value != "/"), None)
         if directory is None:
+            if (
+                item.get("processArgument") is not True
+                or stdin_candidates.get(workload_name) != 1
+            ):
+                continue
+            item["materializedPath"] = "/dev/stdin"
+            item["transport"] = "stdin"
+            changes.append(
+                {
+                    "workload": workload_name,
+                    "sourcePath": path,
+                    "materializedPath": "/dev/stdin",
+                }
+            )
             continue
         materialized_path = f"{directory}/{Path(path).name}"
         item["materializedPath"] = materialized_path
+        item["transport"] = "file"
         changes.append(
             {
                 "workload": workload_name,
@@ -867,6 +901,39 @@ def candidate_provisions_path(source: str, path: str) -> bool:
         rf"\b(?:cp|install)\b[^\n;]{{0,500}}\s+{quoted_path}",
     )
     return any(re.search(pattern, source) for pattern in patterns)
+
+
+def candidate_streams_path(
+    source: str,
+    path: str,
+    *,
+    expected_process: str | None,
+) -> bool:
+    if path != "/dev/stdin" or not expected_process:
+        return False
+    required = (
+        "trap forward_term TERM",
+        "trap forward_int INT",
+        'kill -TERM "$child"',
+        'kill -INT "$child"',
+        'if wait "$child"; then child_status=0; else child_status=$?; fi',
+        'exit "$child_status"',
+        expected_process,
+    )
+    for match in re.finditer(
+        r"\bset -u;[\s\S]{0,4000}?exit \"\$child_status\"",
+        source,
+    ):
+        command = match.group(0)
+        if (
+            re.search(
+                rf"\|[\s\S]{{0,500}}{re.escape(path)}",
+                command,
+            )
+            and all(fragment in command for fragment in required)
+        ):
+            return True
+    return False
 
 
 def validate_startup_input_closure(
@@ -932,6 +999,34 @@ def validate_startup_input_closure(
             continue
         if delivery == "operatorConfig":
             workload_name = str(item.get("workload", ""))
+            if item.get("transport") == "stdin":
+                expected_process = evidence_process(
+                    evidence,
+                    workload_name or None,
+                )
+                if expected_process:
+                    expected_process = substitute_process_path(
+                        expected_process,
+                        source_startup_path,
+                        path,
+                    )
+                if candidate_streams_path(
+                    source,
+                    path,
+                    expected_process=expected_process,
+                ):
+                    continue
+                errors.append(
+                    {
+                        "code": "STARTUP_INPUT_STREAM",
+                        "path": f"$.sourceFacts.startupFiles[{index}]",
+                        "message": (
+                            f"Operator configuration is not streamed to {path} "
+                            "before the selected process starts."
+                        ),
+                    }
+                )
+                continue
             directories = writable_directories(
                 workload_facts(evidence, workload_name)
             )
@@ -1376,11 +1471,15 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
                         f"facts.startupFiles[{index}] lacks image-presence proof"
                     )
                 needs_operator_directory = (
-                    item.get("delivery") == "operatorConfig"
+                    (
+                        item.get("delivery") == "operatorConfig"
+                        and item.get("processArgument") is not True
+                    )
                     or (
                         item.get("delivery") == "image"
                         and item.get("profileSelectedBy")
                         not in {"request", "canonicalProduction"}
+                        and item.get("processArgument") is not True
                     )
                 )
                 if needs_operator_directory:
@@ -2470,12 +2569,33 @@ def reconcile_operator_startup_files(
             continue
         environment_key = best[0]
         existing = candidate_runtime_command(source, environment_key)
-        base_command = existing if existing and process in existing else f"exec {process}"
-        command = (
-            f"umask 077; printf '%s' \"${environment_key}\" > "
-            f"{shlex.quote(materialized_path)}"
-            f" && {base_command}"
-        )
+        if item.get("transport") == "stdin":
+            base_command = (
+                existing if existing and process in existing else process
+            )
+            command = (
+                'set -u; child=""; forwarded=0; '
+                'forward_term() { forwarded=1; if [ -n "$child" ]; then '
+                'kill -TERM "$child" 2>/dev/null || true; fi; }; '
+                'forward_int() { forwarded=1; if [ -n "$child" ]; then '
+                'kill -INT "$child" 2>/dev/null || true; fi; }; '
+                "trap forward_term TERM; trap forward_int INT; "
+                f"printf '%s' \"${environment_key}\" | {base_command} & "
+                'child=$!; while :; do forwarded=0; '
+                'if wait "$child"; then child_status=0; '
+                'else child_status=$?; fi; '
+                'if [ "$forwarded" -eq 0 ]; then '
+                'exit "$child_status"; fi; done'
+            )
+        else:
+            base_command = (
+                existing if existing and process in existing else f"exec {process}"
+            )
+            command = (
+                f"umask 077; printf '%s' \"${environment_key}\" > "
+                f"{shlex.quote(materialized_path)}"
+                f" && {base_command}"
+            )
         rewritten = insert_runtime_command(
             source,
             composite_key=environment_key,

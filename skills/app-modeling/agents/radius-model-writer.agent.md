@@ -95,8 +95,10 @@ an authored `Radius.Security/secrets` resource, bind a non-native helper
 environment variable with `secretKeyRef`, write it to `materializedPath`, then
 exec the selected process with only its source-supported config-file argument
 changed from `path` to `materializedPath`. The materialized path must be inside
-a directory independently proven writable by the effective runtime user. Use
-restrictive file permissions for the materialized secret content.
+a directory independently proven writable by the effective runtime user for
+`transport: file`; use restrictive file permissions. For mechanically selected
+`transport: stdin`, stream the secret to `/dev/stdin` without writing it to
+disk and preserve process exit and TERM/INT forwarding.
 Never silently use an image default that references a missing file, and never
 invent configuration content or an optional adapter.
 Build context is relative to the Git remote root, not merely the supplied

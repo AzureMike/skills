@@ -52,9 +52,9 @@ operator-defined and the request selects no complete repository profile, use
 `operatorConfig`; do not invent an adapter or dependency. Treat an unresolved
 required file as a source blocker rather than claiming that an image can start
 without it. Operator configuration also requires a cited directory writable by
-the effective runtime user. The parent may materialize the same configuration
-under that directory and substitute only the source-supported config-file
-argument.
+the effective runtime user unless the parent mechanically proves it is a
+config-file process argument and streams it without a disk write. The parent
+may substitute only that source-supported config-file argument.
 
 This turn is source analysis only. Do not select Radius types, inspect the
 verified contract, or run `contract_query.py`; the parent resolves Radius
