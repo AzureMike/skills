@@ -30,6 +30,39 @@ REQUIRED_CANDIDATE = (
 )
 
 
+def run_bounded(
+    argv: list[str],
+    *,
+    cwd: Path,
+    timeout: float,
+) -> tuple[int, str, str, bool]:
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=max(1, timeout))
+        return process.returncode, stdout, stderr, False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
+        return 124, stdout, stderr, True
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -157,33 +190,11 @@ def invoke(
         argv.extend(["--session-id", session_id, "--agent", agent])
     argv.extend(["-p", prompt])
     started = time.monotonic()
-    process = subprocess.Popen(
+    status, stdout, stderr, timed_out = run_bounded(
         argv,
         cwd=target,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
+        timeout=timeout,
     )
-    try:
-        stdout, stderr = process.communicate(timeout=max(1, timeout))
-        timed_out = False
-        status = process.returncode
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        status = 124
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = process.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = process.communicate()
     elapsed = round(time.monotonic() - started, 3)
     (output / "events.jsonl").write_text(stdout)
     (output / "stderr.txt").write_text(stderr)
@@ -208,6 +219,7 @@ def validate_candidate(
     source_remote: str | None = None,
     source_commit: str | None = None,
     source_path: str | None = None,
+    timeout: float = 60,
 ) -> dict[str, Any]:
     output = run_dir / "validation"
     output.mkdir(parents=True, exist_ok=True)
@@ -229,16 +241,13 @@ def validate_candidate(
         argv.extend(["--source-commit", source_commit])
     if source_path:
         argv.extend(["--source-path", source_path])
-    process = subprocess.run(
+    status, stdout, stderr, timed_out = run_bounded(
         argv,
         cwd=candidate,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+        timeout=timeout,
     )
-    (output / "stdout.txt").write_text(process.stdout)
-    (output / "stderr.txt").write_text(process.stderr)
+    (output / "stdout.txt").write_text(stdout)
+    (output / "stderr.txt").write_text(stderr)
     try:
         report = json.loads((output / "report.json").read_text())
     except (OSError, json.JSONDecodeError):
@@ -246,9 +255,13 @@ def validate_candidate(
             "valid": False,
             "errors": [
                 {
-                    "code": "VALIDATOR_FAILURE",
+                    "code": (
+                        "VALIDATOR_TIMEOUT"
+                        if timed_out
+                        else "VALIDATOR_FAILURE"
+                    ),
                     "path": "$",
-                    "message": f"validator exited {process.returncode} without a report",
+                    "message": f"validator exited {status} without a report",
                 }
             ],
         }

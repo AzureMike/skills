@@ -1106,6 +1106,7 @@ def validate_all(
     commit: str,
     source_root: Path,
     source_path: str,
+    timeout: float,
 ) -> dict[str, Any]:
     report = validate_candidate(
         candidate,
@@ -1113,6 +1114,7 @@ def validate_all(
         source_remote=remote,
         source_commit=commit,
         source_path=source_path,
+        timeout=timeout,
     )
     report["errors"].extend(validate_evidence_candidate(candidate, evidence))
     report["errors"].extend(
@@ -3390,7 +3392,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=".")
     parser.add_argument("--request", required=True)
-    parser.add_argument("--deadline-seconds", type=float, default=420)
+    parser.add_argument("--deadline-seconds", type=float, default=360)
     parser.add_argument("--evidence-timeout", type=float, default=70)
     parser.add_argument("--author-timeout", type=float, default=100)
     parser.add_argument("--review-timeout", type=float, default=45)
@@ -3815,6 +3817,7 @@ Expected/golden application definitions are unavailable.
                 commit=commit,
                 source_root=repository_root,
                 source_path=source_path,
+                timeout=remaining(deadline),
             )
         )
         write_json(run_dir / "validation-1.json", validation)
@@ -3936,6 +3939,7 @@ candidate files.
                 commit=commit,
                 source_root=repository_root,
                 source_path=source_path,
+                timeout=remaining(deadline),
             )
             write_json(run_dir / "validation-2.json", validation)
             if repair_invocation["processExit"] != 0 and validation.get("valid"):
