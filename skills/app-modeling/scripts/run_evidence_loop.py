@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -47,6 +48,41 @@ DEPENDENCY_AUTHORING_TYPES = {
     "ai-search": "Radius.AI/search",
     "object-storage": "Radius.Storage/objectStorage",
 }
+
+
+def skill_fingerprint() -> str:
+    digest = hashlib.sha256()
+    for path in sorted(SKILL_DIR.rglob("*")):
+        if not path.is_file() or path.suffix not in {".json", ".md", ".py"}:
+            continue
+        digest.update(path.relative_to(SKILL_DIR).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def receipt_path(
+    git_dir: Path,
+    *,
+    commit: str,
+    source_path: str,
+    request: str,
+) -> Path:
+    key = json.dumps(
+        {
+            "commit": commit,
+            "request": request,
+            "skill": skill_fingerprint(),
+            "sourcePath": source_path,
+        },
+        sort_keys=True,
+    ).encode()
+    return (
+        git_dir
+        / "app-modeling-runs"
+        / "receipts"
+        / f"{hashlib.sha256(key).hexdigest()}.json"
+    )
 
 
 def public_invocation(value: dict[str, Any]) -> dict[str, Any]:
@@ -1179,13 +1215,43 @@ def main() -> int:
         capture_output=True,
         check=False,
     ).stdout.splitlines()
+    receipt: Path | None = None
     if args.artifact_dir:
         run_dir = Path(args.artifact_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
+        git_dir_value = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "--git-dir"],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        git_dir = Path(git_dir_value)
+        if not git_dir.is_absolute():
+            git_dir = (repository_root / git_dir).resolve()
+        receipt = receipt_path(
+            git_dir,
+            commit=commit,
+            source_path=source_path,
+            request=args.request,
+        )
+        if receipt.is_file():
+            try:
+                cached = json.loads(receipt.read_text())
+            except (OSError, json.JSONDecodeError):
+                cached = None
+            if isinstance(cached, dict) and (
+                cached.get("status") != "accepted"
+                or all(
+                    (target / ".radius" / name).is_file()
+                    for name in ("app.bicep", "bicepconfig.json")
+                )
+            ):
+                cached["receiptReused"] = True
+                print(json.dumps(cached, sort_keys=True))
+                return 0 if cached.get("status") == "accepted" else 1
         run_dir = (
-            repository_root
-            / ".git"
+            git_dir
             / "app-modeling-runs"
             / (time.strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
         ).resolve()
@@ -1586,6 +1652,8 @@ and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
         remove_agents(installed)
         status["elapsedSeconds"] = round(time.monotonic() - started, 3)
         write_json(run_dir / "run-status.json", status)
+        if receipt is not None:
+            write_json(receipt, status)
         print(json.dumps(status, sort_keys=True))
 
 
