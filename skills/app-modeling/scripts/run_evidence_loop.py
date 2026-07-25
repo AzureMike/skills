@@ -1289,6 +1289,106 @@ def normalize_evidence(value: dict[str, Any]) -> dict[str, Any]:
                     break
         if workloads is not None:
             facts["workloads"] = workloads
+            for workload in workloads:
+                if not isinstance(workload, dict):
+                    continue
+                if not evidence_process(
+                    {"facts": {"workloads": [workload]}}
+                ):
+                    for alias in (
+                        "effectiveProcess",
+                        "runtimeProcess",
+                        "startupCommand",
+                        "commandLine",
+                    ):
+                        if alias in workload:
+                            workload["process"] = workload[alias]
+                            break
+                    else:
+                        if any(
+                            key in workload
+                            for key in ("entrypoint", "cmd", "command", "args")
+                        ):
+                            workload["process"] = {
+                                key: workload[key]
+                                for key in (
+                                    "entrypoint",
+                                    "cmd",
+                                    "command",
+                                    "args",
+                                )
+                                if key in workload
+                            }
+
+        startup_files = normalize_named_items(
+            facts.get("startupFiles"),
+            object_markers={
+                "workload",
+                "path",
+                "required",
+                "delivery",
+                "citation",
+            },
+        )
+        if startup_files is None:
+            for alias in (
+                "startup_files",
+                "startupConfigurationFiles",
+                "requiredStartupFiles",
+                "configurationFiles",
+            ):
+                startup_files = normalize_named_items(
+                    facts.get(alias),
+                    object_markers={
+                        "workload",
+                        "path",
+                        "required",
+                        "delivery",
+                        "citation",
+                    },
+                )
+                if startup_files is not None:
+                    break
+        if startup_files is None and isinstance(workloads, list):
+            nested = []
+            found_nested = False
+            for workload in workloads:
+                if not isinstance(workload, dict):
+                    continue
+                workload_name = str(
+                    workload.get(
+                        "name",
+                        workload.get("workload", workload.get("service", "")),
+                    )
+                )
+                for alias in (
+                    "startupFiles",
+                    "startup_files",
+                    "startupConfigurationFiles",
+                ):
+                    items = normalize_named_items(
+                        workload.get(alias),
+                        object_markers={
+                            "path",
+                            "required",
+                            "delivery",
+                            "citation",
+                        },
+                    )
+                    if items is None:
+                        continue
+                    found_nested = True
+                    nested.extend(
+                        {"workload": workload_name, **item}
+                        if workload_name and not item.get("workload")
+                        else item
+                        for item in items
+                    )
+                    break
+            if found_nested:
+                startup_files = nested
+        if startup_files is not None:
+            facts["startupFiles"] = startup_files
 
         dependencies = normalize_named_items(
             facts.get("dependencies"),
@@ -2207,6 +2307,7 @@ def evidence_process(
         for command_key, args_key in (
             ("command", "args"),
             ("entrypoint", "cmd"),
+            ("executable", "arguments"),
         ):
             command = shell_process(value.get(command_key))
             args = shell_process(value.get(args_key))
@@ -2249,11 +2350,11 @@ def evidence_process(
                 }
             ]
             if matching:
-                return find(matching[0])
+                return normalize(matching[0]) or find(matching[0])
             if len(eligible) != 1:
                 return None
         if eligible:
-            found = find(eligible[0])
+            found = normalize(eligible[0]) or find(eligible[0])
             if found:
                 return found
     found = find(evidence)
@@ -3565,10 +3666,15 @@ Expected/golden application definitions are unavailable.
                 retry_prompt = (
                     "Your evidence JSON was malformed or incomplete: "
                     + "; ".join(evidence_errors)
-                    + ". Do not use tools. Restate the completed evidence as one "
-                    "compact valid JSON object with status, blockers, and facts "
-                    "containing workloads, startupFiles, dependencies, route, "
-                    "and persistentPaths. Preserve all already closed citations."
+                    + ". Do not use tools or summarize. Restate the completed "
+                    "evidence as one compact JSON object. Preserve every closed "
+                    "fact and citation. Use exactly top-level status, blockers, "
+                    "and facts; facts must contain workloads, startupFiles, "
+                    "dependencies, route, and persistentPaths. Every workload "
+                    "must contain process as a shell string, argv array, or an "
+                    "object with command/args or entrypoint/cmd. startupFiles "
+                    "must be an array; use [] only if the completed source "
+                    "review proved no startup configuration file is required."
                 )
             else:
                 retry_prompt = (
