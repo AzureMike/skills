@@ -38,13 +38,11 @@ python3 "<skill-directory>/scripts/run_evidence_loop.py" \
 ```
 
 The workflow asks one read-only analyst for a strict, schema-validated,
-source-only runtime model with all runnable deployment profiles. Deterministic
-code selects the highest-priority profile compatible with pinned provider
-requirements, then normalizes protocol, secret, composite, graph, and
-persistence bindings and renders both output files. The compiler and mechanical
-validator check the exact result before one independent read-only audit. No
-agent authors or repairs Bicep. The default internal deadline is 300 seconds,
-and an invocation receipt prevents a parent from rerunning the same request.
+source-only runtime model. Deterministic code then resolves the pinned Radius
+contracts, normalizes protocol, secret, composite, graph, and persistence
+bindings, and renders both output files. The compiler and mechanical validator
+check the exact result before one independent read-only audit. No agent authors
+or repairs Bicep. The default internal deadline is 300 seconds.
 
 Treat the final JSON object as authoritative. On failure, report its reason and
 artifact directory. Do not retry, inspect internal artifacts, edit the

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -42,12 +41,6 @@ SECRET_NAME = re.compile(
     r"CONNECTION_?STRING|CREDENTIAL)(?:$|_)",
     re.IGNORECASE,
 )
-PROFILE_PRIORITY = {
-    "explicit-request": 0,
-    "declared-production": 1,
-    "source-supported": 2,
-    "image-default": 3,
-}
 
 
 @dataclass(frozen=True)
@@ -151,70 +144,24 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
     if len(dependency_ids) != len(set(dependency_ids)):
         errors.append("$.dependencies: dependency ids must be unique")
     workload_set = set(workload_ids)
-    dependency_set = set(dependency_ids)
-    profile_ids = [item["id"] for item in model["deploymentProfiles"]]
-    if len(profile_ids) != len(set(profile_ids)):
-        errors.append("$.deploymentProfiles: profile ids must be unique")
-    referenced_dependencies: set[str] = set()
 
     writable = {
         workload["id"]: [item["path"] for item in workload["writablePaths"]]
         for workload in model["workloads"]
     }
-    for profile_index, profile in enumerate(model["deploymentProfiles"]):
-        profile_dependencies = set(profile["dependencyIds"])
-        referenced_dependencies.update(profile_dependencies)
-        unknown_dependencies = profile_dependencies - dependency_set
-        if unknown_dependencies:
+    for index, item in enumerate(model["persistence"]):
+        if item["workloadId"] not in workload_set:
             errors.append(
-                f"$.deploymentProfiles[{profile_index}].dependencyIds: unknown "
-                f"{sorted(unknown_dependencies)}"
+                f"$.persistence[{index}].workloadId: unknown workload"
             )
-        profile_config_keys: set[tuple[str, str]] = set()
-        common_config_keys = {
-            (workload["id"], item["name"])
-            for workload in model["workloads"]
-            for item in workload["configuration"]
-        }
-        for config_index, item in enumerate(profile["configuration"]):
-            config_key = (item["workloadId"], item["name"])
-            if config_key in profile_config_keys or config_key in common_config_keys:
-                errors.append(
-                    f"$.deploymentProfiles[{profile_index}].configuration"
-                    f"[{config_index}]: duplicate workload configuration key"
-                )
-            profile_config_keys.add(config_key)
-            if item["workloadId"] not in workload_set:
-                errors.append(
-                    f"$.deploymentProfiles[{profile_index}].configuration"
-                    f"[{config_index}].workloadId: unknown workload"
-                )
-            if item["sensitive"] and item["value"]["kind"] != "developerInput":
-                errors.append(
-                    f"$.deploymentProfiles[{profile_index}].configuration"
-                    f"[{config_index}]: sensitive values must be developerInput"
-                )
-        for persistence_index, item in enumerate(profile["persistence"]):
-            if item["workloadId"] not in workload_set:
-                errors.append(
-                    f"$.deploymentProfiles[{profile_index}].persistence"
-                    f"[{persistence_index}].workloadId: unknown workload"
-                )
-            elif not any(
-                item["path"] == path
-                or item["path"].startswith(path.rstrip("/") + "/")
-                for path in writable[item["workloadId"]]
-            ):
-                errors.append(
-                    f"$.deploymentProfiles[{profile_index}].persistence"
-                    f"[{persistence_index}].path: path is not under a cited "
-                    "runtime-writable directory"
-                )
-    if referenced_dependencies != dependency_set:
-        errors.append(
-            "$.deploymentProfiles: dependencyIds across profiles must exactly "
-            "cover modeled dependencies"
-        )
+        elif not any(
+            item["path"] == path or item["path"].startswith(path.rstrip("/") + "/")
+            for path in writable[item["workloadId"]]
+        ):
+            errors.append(
+                f"$.persistence[{index}].path: path is not under a cited "
+                "runtime-writable directory"
+            )
 
     available_types = {
         name.split("@", 1)[0] for name in contract["resourceTypes"]
@@ -327,151 +274,14 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
     return errors
 
 
-def profile_compatibility(
-    profile: dict[str, Any],
-    dependencies: dict[str, dict[str, Any]],
-    contract: dict[str, Any],
-) -> list[str]:
-    reasons: list[str] = []
-    for dependency_id in profile["dependencyIds"]:
-        dependency = dependencies[dependency_id]
-        qualified_type = DEPENDENCY_TYPES[dependency["kind"]]
-        required = set(
-            contract["protocolProfiles"]
-            .get(qualified_type, {})
-            .get("providerRequiredClientSettings", [])
-        )
-        settings = {item["slot"]: item for item in dependency["settings"]}
-        for slot in sorted(required):
-            setting = settings.get(slot)
-            if setting is None:
-                reasons.append(
-                    f"{dependency_id}: provider requires source-native {slot}"
-                )
-            elif (
-                setting["delivery"]["kind"] == "sourceDefault"
-                and setting.get("sourceDefault") is False
-            ):
-                reasons.append(
-                    f"{dependency_id}: source explicitly disables required {slot}"
-                )
-    return reasons
-
-
-def materialize_profile(
-    model: dict[str, Any],
-    contract: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    dependencies = {item["id"]: item for item in model["dependencies"]}
-    evaluated = []
-    for profile in model["deploymentProfiles"]:
-        reasons = profile_compatibility(profile, dependencies, contract)
-        evaluated.append(
-            {
-                "profile": profile,
-                "compatible": not reasons,
-                "reasons": reasons,
-            }
-        )
-    eligible = [item for item in evaluated if item["compatible"]]
-    requested = [
-        item
-        for item in evaluated
-        if item["profile"]["classification"] == "explicit-request"
-    ]
-    if requested:
-        eligible = [item for item in requested if item["compatible"]]
-    if not eligible:
-        details = "; ".join(
-            f"{item['profile']['id']}: {', '.join(item['reasons'])}"
-            for item in evaluated
-        )
-        prefix = (
-            "no explicitly requested source profile is compatible with Radius"
-            if requested
-            else "no source profile is compatible with Radius"
-        )
-        raise ValueError(f"{prefix}: {details}")
-    best_priority = min(
-        PROFILE_PRIORITY[item["profile"]["classification"]] for item in eligible
-    )
-    preferred = [
-        item
-        for item in eligible
-        if PROFILE_PRIORITY[item["profile"]["classification"]] == best_priority
-    ]
-    if len(preferred) != 1:
-        ids = sorted(item["profile"]["id"] for item in preferred)
-        raise ValueError(
-            f"ambiguous equally ranked compatible source profiles: {ids}"
-        )
-    selected = preferred[0]
-    profile = selected["profile"]
-    materialized = copy.deepcopy(model)
-    materialized["dependencies"] = [
-        item
-        for item in materialized["dependencies"]
-        if item["id"] in set(profile["dependencyIds"])
-    ]
-    workloads = {item["id"]: item for item in materialized["workloads"]}
-    for item in profile["configuration"]:
-        config = {key: value for key, value in item.items() if key != "workloadId"}
-        workloads[item["workloadId"]]["configuration"].append(config)
-    materialized["persistence"] = copy.deepcopy(profile["persistence"])
-    materialized.pop("deploymentProfiles")
-    selection = {
-        "selected": profile,
-        "evaluated": [
-            {
-                "id": item["profile"]["id"],
-                "classification": item["profile"]["classification"],
-                "compatible": item["compatible"],
-                "reasons": item["reasons"],
-            }
-            for item in evaluated
-        ],
-    }
-    return materialized, selection
-
-
 def selected_contract(
     model: dict[str, Any],
     contract: dict[str, Any],
 ) -> dict[str, Any]:
-    model, _ = materialize_profile(model, contract)
     selected = {
         "Radius.Core/applications",
         "Radius.Compute/containers",
         "Radius.Security/secrets",
-    }
-    if any(item["image"]["kind"] == "build" for item in model["workloads"]):
-        selected.add("Radius.Compute/containerImages")
-    if model["persistence"]:
-        selected.add("Radius.Compute/persistentVolumes")
-    if any(
-        listener["external"]
-        for workload in model["workloads"]
-        for listener in workload["listeners"]
-    ):
-        selected.add("Radius.Compute/routes")
-    selected.update(
-        DEPENDENCY_TYPES[item["kind"]] for item in model["dependencies"]
-    )
-    available = {
-        name.split("@", 1)[0]: name for name in contract["resourceTypes"]
-    }
-    return {
-        "schemaVersion": contract["schemaVersion"],
-        "extension": contract["extension"],
-        "policies": contract["policies"],
-        "bundles": {
-            qualified_type: {
-                "type": contract["resourceTypes"][available[qualified_type]],
-                "recipe": contract["azureRecipeMappings"].get(qualified_type),
-                "protocol": contract["protocolProfiles"].get(qualified_type),
-            }
-            for qualified_type in sorted(selected)
-        },
     }
 
 
@@ -506,6 +316,35 @@ def plan_document(plan: dict[str, Any]) -> dict[str, Any]:
             }
             for item in plan["resources"]
         ],
+    }
+    if any(item["image"]["kind"] == "build" for item in model["workloads"]):
+        selected.add("Radius.Compute/containerImages")
+    if model["persistence"]:
+        selected.add("Radius.Compute/persistentVolumes")
+    if any(
+        listener["external"]
+        for workload in model["workloads"]
+        for listener in workload["listeners"]
+    ):
+        selected.add("Radius.Compute/routes")
+    selected.update(
+        DEPENDENCY_TYPES[item["kind"]] for item in model["dependencies"]
+    )
+    available = {
+        name.split("@", 1)[0]: name for name in contract["resourceTypes"]
+    }
+    return {
+        "schemaVersion": contract["schemaVersion"],
+        "extension": contract["extension"],
+        "policies": contract["policies"],
+        "bundles": {
+            qualified_type: {
+                "type": contract["resourceTypes"][available[qualified_type]],
+                "recipe": contract["azureRecipeMappings"].get(qualified_type),
+                "protocol": contract["protocolProfiles"].get(qualified_type),
+            }
+            for qualified_type in sorted(selected)
+        },
     }
 
 
@@ -1146,9 +985,8 @@ def build_candidate(
         raise ValueError("; ".join(errors))
     if model["status"] != "complete":
         raise ValueError("source model is blocked")
-    materialized, selection = materialize_profile(model, contract)
     plan = resolve(
-        materialized,
+        model,
         contract,
         remote=remote,
         commit=commit,
@@ -1165,9 +1003,6 @@ def build_candidate(
     candidate.mkdir(parents=True, exist_ok=True)
     (candidate / "source-facts.json").write_text(
         json.dumps(model, indent=2, sort_keys=True) + "\n"
-    )
-    (candidate / "selected-profile.json").write_text(
-        json.dumps(selection, indent=2, sort_keys=True) + "\n"
     )
     (candidate / "requirements.json").write_text(
         json.dumps(plan["requirements"], indent=2, sort_keys=True) + "\n"

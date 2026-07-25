@@ -21,20 +21,21 @@ Read the supplied `source-model.schema.json` completely, inspect the repository
 from scratch, and return exactly one JSON object matching that schema. Every
 semantic choice requires a `path:line` citation. Never add undeclared fields.
 
-Select only production workloads. Exclude proxies, admin tools, live reload,
-tests, migrations, demo helpers, optional adapters, and extra clusters unless
-startup or the request requires them.
-Before recording `deploymentProfiles`, inspect the production Dockerfile plus
-root-level Compose, Helm, deployment, and release manifests. Enumerate every
-materially distinct runnable application profile supported by source: an
-explicitly requested profile, a declared production deployment, an external
-backing mode proven by source or a complete manifest, and an embedded image
-default when present. Classify each accurately; never label a development
-manifest as declared production. Keep helper services out of the workload set.
-At most one profile may have the highest applicable classification; when source
-has no canonical choice between equally ranked modes, return a blocker instead.
-Put each profile's dependency IDs, configuration, and persistence only in that
-profile. The union of profile dependency IDs must equal `dependencies`.
+Select only production workloads and the minimum backing services required by
+the canonical runnable profile or explicit request. Exclude proxies, admin
+tools, live reload, tests, migrations, demo helpers, optional adapters, and
+extra clusters unless startup or the request requires them. Do not infer a
+production dependency solely from a development example; verify that the
+selected production client consumes it.
+When a complete repository manifest selects a first-class external backing
+service that the production workload supports, preserve that backing path
+instead of silently switching to an embedded fallback. Exclude unrelated
+development-only workloads individually.
+Before choosing the profile, inspect the production Dockerfile plus root-level
+Compose, Helm, deployment, and release manifests. If one complete manifest
+wires the production application client to an external backing service, select
+that path even when the bare image has an embedded fallback. Select the
+embedded fallback only when no complete manifest selects the external path.
 Model dependencies required for the workload's primary production function,
 not only those required for its process to start. A UI, API, gateway, or admin
 client that can boot empty still requires one instance of the core service it
@@ -48,15 +49,13 @@ For every workload:
   and must be a blocker.
 - Use `image.kind: published` only for an immutable first-party image tied to
   the exact source tag. Cite both the source Dockerfile and release publication.
-- Trace the effective image ENTRYPOINT/CMD and always record the exact effective
-  process as argv or shell without changing it.
+- Trace the effective image ENTRYPOINT/CMD. Use `process.kind: imageDefault`
+  only when no runtime wrapper can be required. Otherwise record the exact
+  source process as argv or shell without changing it.
 - Record every listener and only externally required routes.
 - Record source-native nondependency environment configuration. Use
   `developerInput` for user-supplied values and mark every credential or secret
-  sensitive. Put configuration shared by every profile on the workload. Put
-  profile-specific configuration in that profile. For indexed dependency
-  clients, include required non-connection identity such as cluster/display
-  names as profile configuration; it is not a dependency protocol slot.
+  sensitive.
 - Record only directories proven writable by the effective runtime user.
 
 For every dependency, assign one canonical `kind` and list each consuming
@@ -82,9 +81,8 @@ container names needed by the selected profile in `inputs`. Treat all
 credential inputs as `developerInput`; do not copy example passwords.
 For `connectionUri`, also record the exact source-supported `scheme`.
 
-Record application-owned persistence in the profiles that use it only. Do not
-mount managed backing-service data directories. Every persistent path must
-fall under a cited writable path.
+Record application-owned persistence only. Do not mount managed backing-service
+data directories. Every persistent path must fall under a cited writable path.
 Record every required startup configuration file. Use `image` only when the
 selected image contains the complete selected configuration. Use
 `operatorInput` when the repository deliberately requires operator-supplied

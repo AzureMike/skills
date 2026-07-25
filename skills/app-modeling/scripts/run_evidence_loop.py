@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -35,41 +34,6 @@ from model_pipeline import (
     selected_contract,
     source_errors,
 )
-
-
-def skill_fingerprint() -> str:
-    digest = hashlib.sha256()
-    for path in sorted(SKILL_DIR.rglob("*")):
-        if not path.is_file() or path.suffix not in {".json", ".md", ".py"}:
-            continue
-        digest.update(path.relative_to(SKILL_DIR).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
-def receipt_path(
-    git_dir: Path,
-    *,
-    commit: str,
-    source_path: str,
-    request: str,
-) -> Path:
-    key = json.dumps(
-        {
-            "commit": commit,
-            "request": request,
-            "skill": skill_fingerprint(),
-            "sourcePath": source_path,
-        },
-        sort_keys=True,
-    ).encode()
-    return (
-        git_dir
-        / "app-modeling-runs"
-        / "receipts"
-        / f"{hashlib.sha256(key).hexdigest()}.json"
-    )
 
 
 def exact_tags(target: Path, remote: str, commit: str) -> list[str]:
@@ -181,7 +145,7 @@ def main() -> int:
     parser.add_argument("--deadline-seconds", type=float, default=300)
     parser.add_argument("--evidence-timeout", type=float, default=125)
     parser.add_argument("--evidence-retry-timeout", type=float, default=45)
-    parser.add_argument("--audit-timeout", type=float, default=90)
+    parser.add_argument("--audit-timeout", type=float, default=60)
     parser.add_argument("--artifact-dir")
     parser.add_argument("--supervised-child", action="store_true")
     args = parser.parse_args()
@@ -338,7 +302,6 @@ is closed with file:line evidence and blockers is empty.
 Independently inspect source at {target} for request {args.request!r}, then
 audit the exact generated candidate against:
 - source model: {run_dir / 'source-model.json'}
-- selected profile: {candidate / 'selected-profile.json'}
 - selected pinned contracts: {run_dir / 'resolved-contract.json'}
 - resolved plan: {candidate / 'resolved-plan.json'}
 - requirements: {candidate / 'requirements.json'}
@@ -391,33 +354,21 @@ def supervised_main() -> int:
     parser.add_argument("--artifact-dir")
     args, _ = parser.parse_known_args()
     target = Path(args.target).resolve()
-    root, source_path, _, commit, _ = repository_facts(target)
-    git_dir = Path(
-        subprocess.run(
-            ["git", "-C", str(target), "rev-parse", "--git-dir"],
-            text=True,
-            capture_output=True,
-            timeout=5,
-            check=True,
-        ).stdout.strip()
-    )
-    if not git_dir.is_absolute():
-        git_dir = (root / git_dir).resolve()
-    receipt = receipt_path(
-        git_dir,
-        commit=commit,
-        source_path=source_path,
-        request=args.request,
-    )
-    if receipt.is_file():
-        cached = json.loads(receipt.read_text())
-        cached["receiptReused"] = True
-        print(json.dumps(cached, sort_keys=True))
-        return 0 if cached.get("status") == "accepted" else 1
     if args.artifact_dir:
         run_dir = Path(args.artifact_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
+        git_dir = Path(
+            subprocess.run(
+                ["git", "-C", str(target), "rev-parse", "--git-dir"],
+                text=True,
+                capture_output=True,
+                timeout=5,
+                check=True,
+            ).stdout.strip()
+        )
+        if not git_dir.is_absolute():
+            git_dir = (target / git_dir).resolve()
         run_dir = (
             git_dir
             / "app-modeling-runs"
@@ -448,22 +399,6 @@ def supervised_main() -> int:
     sys.stdout.write(stdout)
     sys.stderr.write(stderr)
     if not timed_out:
-        result = None
-        for line in reversed(stdout.splitlines()):
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict) and value.get("status"):
-                result = value
-                break
-        if result is None:
-            result = {
-                "status": "failed",
-                "reason": "supervised child returned no final status",
-                "artifacts": str(run_dir),
-            }
-        write_json(receipt, result)
         return code
     remove_agents([path for path in agent_paths if path not in preexisting])
     result = {
@@ -474,7 +409,6 @@ def supervised_main() -> int:
         "deadlineSeconds": args.deadline_seconds,
     }
     write_json(run_dir / "run-status.json", result)
-    write_json(receipt, result)
     print(json.dumps(result, sort_keys=True))
     return 124
 
