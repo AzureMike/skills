@@ -56,13 +56,21 @@ For every workload:
   only when no runtime wrapper can be required. Otherwise record the exact
   source process as argv or shell without changing it.
 - Record every listener and only externally required routes.
-- Record source-native nondependency environment configuration. Do not record
-  a value the image already carries: a variable set by an ENV instruction in
-  the workload's own Dockerfile is baked into the image and inherited by the
-  container, so restating it says nothing. Record configuration that has to be
-  supplied from outside the image, and cite where the source supplies it. Use
-  `developerInput` for user-supplied values and mark every credential or
-  secret sensitive.
+- Record source-native nondependency environment configuration, but only where
+  it changes this deployment. Before recording a setting, ask what would
+  actually differ if you left it out. Omit it when the answer is nothing:
+  when an ENV instruction in the workload's own Dockerfile already bakes the
+  same value into the image the container inherits it; when the value merely
+  restates the default the application's own code applies for an unset
+  variable; and when it switches on an optional subsystem that needs storage,
+  a file, or a port this definition does not declare, because that subsystem
+  cannot function here. Record configuration that genuinely has to be supplied
+  from outside the image, and cite where the source supplies it.
+- Use `developerInput` only for a value the deployer actually possesses and
+  the deployment cannot proceed without: a credential, or a setting the
+  application refuses to start without. A variable the application reads but
+  runs without is not something to demand; leaving it unset is the source's
+  own behaviour. Mark every credential or secret sensitive.
 - Record only directories proven writable by the effective runtime user.
 
 For every dependency, assign one canonical `kind` and list each consuming
