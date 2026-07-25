@@ -42,6 +42,16 @@ client that can boot empty still requires one instance of the core service it
 exists to query or manage. Prefer cited direct native settings over enabling an
 optional dynamic-configuration subsystem merely to make the process start.
 
+Many applications ship more than one implementation of the same dependency: a
+managed service alongside an embedded, in-process, in-memory or single-file
+one that exists so a developer can run the application without infrastructure.
+Choose the implementation the repository's own deployment wires up - its
+Compose file, Helm chart or Kubernetes manifests - not the fallback the code
+selects when nothing is configured. The embedded path is a development
+convenience and does not survive the container being replaced. Declaring the
+application self-contained is correct only when the repository provides no
+external implementation at all.
+
 For every workload:
 
 - Decide whether the Dockerfile builds this application from a clean checkout

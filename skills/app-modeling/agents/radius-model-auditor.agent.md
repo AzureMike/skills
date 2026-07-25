@@ -42,7 +42,11 @@ Confine findings to the six judgements the model actually made:
 3. The backing services. Whether every service the application requires to
    perform its primary function is present exactly once, and no service the
    source does not use has been added. A UI, API or gateway that exists to
-   manage a system must be connected to that system.
+   manage a system must be connected to that system. Reject a model that
+   substitutes an embedded, in-process or single-file implementation for the
+   external service the repository's own Compose file, Helm chart or
+   Kubernetes manifests wire up, and reject a self-contained claim when the
+   repository does provide an external implementation.
 4. Connection versus configuration. Whether each value the model routed
    through a dependency setting is genuinely a coordinate of that connection,
    and each value it recorded as configuration genuinely is not.
