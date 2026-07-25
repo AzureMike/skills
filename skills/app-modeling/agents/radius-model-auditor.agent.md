@@ -49,7 +49,12 @@ Confine findings to the six judgements the model actually made:
    repository does provide an external implementation.
 4. Connection versus configuration. Whether each value the model routed
    through a dependency setting is genuinely a coordinate of that connection,
-   and each value it recorded as configuration genuinely is not.
+   and each value it recorded as configuration genuinely is not. The selected
+   contracts list `providerRequiredSettings` for each dependency: the provider
+   requires those slots, so one of them being filled is never itself a fault.
+   If you believe the wrong value was routed into a required slot, name the
+   value from the repository that belongs there instead. If the repository
+   offers none, the model's choice stands and there is no finding.
 5. Delivery. Whether every environment name, file path and argument the model
    recorded is the name the application actually reads, quoted from source.
    Reject invented names.
@@ -68,11 +73,17 @@ Cite the file and line you checked for every finding. Use at most two focused
 source-search batches. If the repository does not settle a question, say so
 with `needs_more_info` rather than guessing.
 
+Mark each finding `blocking` only when it means the generated definition
+describes an application this repository does not contain: a workload that is
+not the published application, an image that cannot be built, a backing
+service that is absent or missing, or a name the application never reads. A
+finding that a detail could be classified or expressed better is not blocking.
+
 Return only one compact JSON object:
 
 `{"verdict":"accepted|rejected|needs_more_info","summary":"...",
-"findings":[{"code":"...","message":"...","source":"evidence path",
-"candidate":"candidate path","correction":"..."}]}`
+"findings":[{"code":"...","message":"...","blocking":true,
+"source":"evidence path","candidate":"candidate path","correction":"..."}]}`
 
 Use `accepted` only when findings is empty. Do not include markdown or prose
 outside the JSON object.

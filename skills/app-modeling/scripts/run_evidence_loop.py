@@ -32,6 +32,7 @@ from model_pipeline import (
     CONTRACT_PATH,
     SOURCE_SCHEMA_PATH,
     build_candidate,
+    binding_slots,
     selected_contract,
     source_errors,
 )
@@ -190,22 +191,6 @@ def reportable_slots(schema: dict) -> set[str]:
 
     walk(schema)
     return found
-
-
-def binding_slots(profile: dict) -> set[str]:
-    """Slots the contract can bind for this service, read off the binding keys.
-
-    Every binding key is named ``{slot}{Kind}``, so the key names are already
-    the list of settings this service can deliver.
-    """
-
-    suffixes = ("Property", "Secret", "Literal", "Transform", "Input")
-    slots = set()
-    for key in profile.get("binding") or {}:
-        suffix = next((item for item in suffixes if key.endswith(item)), None)
-        if suffix and suffix != "Input":
-            slots.add(key[: -len(suffix)])
-    return slots
 
 
 def slot_guide(contract: dict, schema: dict) -> str:
@@ -514,8 +499,22 @@ Return only the required compact audit JSON.
                 status["reason"] = "corrected candidate failed mechanical validation"
                 return 1
         if review["verdict"] != "accepted":
-            status["reason"] = f"independent audit returned {review['verdict']}"
-            return 1
+            # The candidate compiled and passed mechanical validation, and the
+            # one correction round could not turn this finding into a model the
+            # contract accepts. Discarding the whole definition over a detail
+            # the auditor itself did not call blocking trades a working
+            # artifact for nothing, so emit it and record the open finding.
+            blocking = [
+                finding
+                for finding in review.get("findings") or []
+                if finding.get("blocking")
+            ]
+            if blocking or not validation.get("valid"):
+                status["reason"] = (
+                    f"independent audit returned {review['verdict']}"
+                )
+                return 1
+            status["unresolvedFindings"] = review.get("findings") or []
 
         destination = target / ".radius"
         destination.mkdir(parents=True, exist_ok=True)

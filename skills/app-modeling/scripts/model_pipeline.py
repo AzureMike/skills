@@ -363,10 +363,60 @@ def selected_contract(
     model: dict[str, Any],
     contract: dict[str, Any],
 ) -> dict[str, Any]:
-    selected = {
+    """The pinned contract facts that actually govern this one model.
+
+    An independent auditor has to be able to tell an authoring mistake from a
+    provider requirement. Handing it the whole catalogue buries that
+    distinction, so narrow the contract to the types this model selects and
+    state, per dependency, which settings the provider requires and which the
+    binding can supply.
+    """
+
+    kinds = dependency_types(contract)
+    used = {
         "Radius.Core/applications",
         "Radius.Compute/containers",
-        "Radius.Security/secrets",
+    }
+    dependencies = []
+    for dependency in model.get("dependencies") or []:
+        qualified = kinds.get(dependency.get("kind"))
+        if not qualified:
+            continue
+        used.add(qualified)
+        profile = contract["protocolProfiles"][qualified]
+        required = [
+            item.split("=", 1)[0]
+            for item in (profile.get("requiredClientSettings") or [])
+            + (profile.get("runtimeRequiredClientSettings") or [])
+        ]
+        dependencies.append(
+            {
+                "id": dependency.get("id"),
+                "sourceKind": dependency.get("kind"),
+                "resourceType": qualified,
+                "providerRequiredSettings": sorted(set(required)),
+                "bindableSettings": sorted(
+                    contract_slots(profile) | binding_slots(profile)
+                ),
+            }
+        )
+    if any(
+        (workload.get("image") or {}).get("kind") == "build"
+        for workload in model.get("workloads") or []
+    ):
+        used.add("Radius.Compute/containerImages")
+    if any(item["providerRequiredSettings"] for item in dependencies):
+        used.add("Radius.Security/secrets")
+    return {
+        "schemaVersion": contract.get("schemaVersion"),
+        "generatedFrom": contract.get("generatedFrom"),
+        "policies": contract.get("policies"),
+        "dependencies": dependencies,
+        "resourceTypes": {
+            name: body
+            for name, body in contract["resourceTypes"].items()
+            if name.partition("@")[0] in used
+        },
     }
 
 
@@ -506,6 +556,14 @@ def native_setting(
     )
 
 
+def same_value(candidate: Any, pinned: str) -> bool:
+    """Compare a source-model value with a contract constant written as text."""
+
+    if isinstance(candidate, bool):
+        return pinned.strip().lower() == ("true" if candidate else "false")
+    return str(candidate).strip().lower() == pinned.strip().lower()
+
+
 def contract_constants(profile: dict[str, Any]) -> dict[str, str]:
     """Slots the contract fixes to a constant, written as ``slot=value``.
 
@@ -524,6 +582,24 @@ def contract_constants(profile: dict[str, Any]) -> dict[str, str]:
         if separator:
             constants[name] = value
     return constants
+
+
+# Every binding key is named ``{slot}{Kind}``: the suffix says how to resolve
+# the slot, so the key names are themselves the list of deliverable settings.
+BINDING_SUFFIXES = ("Property", "Secret", "Literal", "Transform", "Input")
+
+
+def binding_slots(profile: dict[str, Any]) -> set[str]:
+    """Slots the binding can deliver, read off the ``{slot}{Kind}`` key names."""
+
+    slots = set()
+    for key in profile.get("binding") or {}:
+        suffix = next(
+            (item for item in BINDING_SUFFIXES if key.endswith(item)), None
+        )
+        if suffix and suffix != "Input":
+            slots.add(key[: -len(suffix)])
+    return slots
 
 
 def contract_slots(profile: dict[str, Any]) -> set[str]:
@@ -817,6 +893,7 @@ def resolve(
             }
             skipped_slots: set[str] = set()
             profile = contract["protocolProfiles"].get(qualified_type, {})
+            constants = contract_constants(profile)
             uri_spec = profile.get("runtimeUri")
             if uri_spec and uri_spec.get("setting") in settings_by_slot:
                 uri = settings_by_slot[uri_spec["setting"]]
@@ -1015,6 +1092,25 @@ def resolve(
                     continue
                 delivery = setting["delivery"]
                 if delivery["kind"] == "sourceDefault":
+                    # An application default can stand in for a setting only
+                    # when it already equals what the provider requires. The
+                    # contract pins these values because the provisioned
+                    # service will not accept anything else, so a default that
+                    # disagrees has to be overridden explicitly rather than
+                    # silently left off the container.
+                    pinned = constants.get(slot)
+                    if pinned is not None and not same_value(
+                        setting.get("sourceDefault"), pinned
+                    ):
+                        raise ValueError(
+                            f"$.dependencies[{dependency['id']}].settings: "
+                            f"slot {slot!r} "
+                            f"defaults to "
+                            f"{json.dumps(setting.get('sourceDefault'))} in the "
+                            f"application but {dependency['kind']!r} requires "
+                            f"{pinned!r}; record how the application reads this "
+                            "setting instead of relying on its default"
+                        )
                     ledger.append(
                         {
                             "name": slot,
