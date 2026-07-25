@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 from pathlib import Path
 import re
@@ -53,6 +54,79 @@ PERSISTENCE_REQUEST = re.compile(
     r"|data\s+persistence)\b",
     re.IGNORECASE,
 )
+
+
+DEPLOYMENT_MANIFESTS = (
+    "docker-compose*.yml", "docker-compose*.yaml",
+    "compose*.yml", "compose*.yaml",
+    "Chart.yaml", "requirements.yaml", "values*.yml", "values*.yaml",
+)
+
+MANIFEST_DIRECTORIES = (
+    "deploy", "deployment", "deployments", "k8s", "kubernetes",
+    "manifests", "chart", "charts", "helm",
+)
+
+IGNORED_DIRECTORIES = {
+    ".git", ".github", "node_modules", "vendor", "testdata", "test", "tests",
+    "site-packages", "dist", "build", "examples", "templates",
+}
+
+
+def deployment_manifests(root: Path, limit: int = 25) -> list[str]:
+    """Paths of the repository's own deployment manifests.
+
+    Nothing here reads a manifest or knows what a backing service is; it only
+    reports which files exist. The analyst decides what they mean. Listing them
+    matters because whether the repository deploys an external service is the
+    one question a bare image cannot answer, and an analyst that never opens
+    the chart answers it wrongly while citing the code correctly.
+
+    Ordering is shallowest first, because a manifest beside the Dockerfile
+    deploys the application while a deep one usually fixtures a single
+    subsystem. Helm `templates` are skipped: they are rendered from the values
+    and chart files, which is where a declared dependency is written. CI
+    workflows are excluded because they configure test runs, not deployments.
+    """
+
+    found: set[str] = set()
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        parts = set(relative.parts[:-1])
+        if parts & IGNORED_DIRECTORIES:
+            continue
+        matches_name = any(
+            fnmatch.fnmatch(path.name, pattern)
+            for pattern in DEPLOYMENT_MANIFESTS
+        )
+        in_manifest_directory = bool(
+            parts & set(MANIFEST_DIRECTORIES)
+        ) and path.suffix in {".yml", ".yaml"}
+        if matches_name or in_manifest_directory:
+            found.add(relative.as_posix())
+    return sorted(found, key=lambda item: (item.count("/"), item))[:limit]
+
+
+def manifest_notice(paths: list[str]) -> str:
+    """Put the repository's own deployment manifests in front of the analyst."""
+
+    if not paths:
+        return (
+            "This repository contains no deployment manifest, so the image's "
+            "own defaults are the only deployment evidence available.\n"
+        )
+    listed = "\n".join(f"- {path}" for path in paths)
+    return (
+        "This repository's own deployment manifests are:\n"
+        f"{listed}\n"
+        "Read the ones that deploy this application before deciding whether "
+        "it needs a backing service. A manifest that wires the application to "
+        "an external service is evidence that it requires one, and outranks "
+        "the fallback the code selects when nothing is configured. Declare no "
+        "dependency, or self-contained, only after these files show none.\n"
+    )
 
 
 def requests_persistence(request: str) -> bool:
@@ -344,6 +418,7 @@ Exact tags: {json.dumps(tags)}
 Return one JSON object only. Use status complete only when every required field
 is closed with file:line evidence and blockers is empty.
 
+{manifest_notice(deployment_manifests(root))}
 Each backing service kind needs these client settings recorded under
 `settings`, with the exact environment variable name the source consumes:
 
