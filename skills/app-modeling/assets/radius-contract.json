@@ -1453,6 +1453,7 @@
   },
   "protocolProfiles": {
     "Radius.AI/search": {
+      "sourceKind": "ai-search",
       "binding": {
         "apiKeySecret": "apiKey",
         "endpointProperty": "endpoint"
@@ -1465,6 +1466,7 @@
       ]
     },
     "Radius.Data/mySqlDatabases": {
+      "sourceKind": "mysql",
       "binding": {
         "databaseInput": "database",
         "hostProperty": "host",
@@ -1482,6 +1484,7 @@
       ]
     },
     "Radius.Messaging/rabbitMQ": {
+      "sourceKind": "rabbitmq",
       "binding": {
         "connectionStringSecret": "connectionString",
         "entityInput": "queue",
@@ -1507,6 +1510,7 @@
       }
     },
     "Radius.Data/redisCaches": {
+      "sourceKind": "redis",
       "binding": {
         "uriSecret": "url"
       },
@@ -1514,6 +1518,7 @@
       "tls": "Preserve the scheme and TLS options carried by the recipe URL."
     },
     "Radius.AI/models": {
+      "sourceKind": "ai-model",
       "binding": {
         "apiKeySecret": "apiKey",
         "endpointProperty": "endpoint"
@@ -1524,9 +1529,13 @@
         "apiKey",
         "apiVersion",
         "deploymentOrModel"
-      ]
+      ],
+      "definitionProperties": {
+        "deploymentOrModel": "model"
+      }
     },
     "Radius.Data/mongoDatabases": {
+      "sourceKind": "mongodb",
       "binding": {
         "endpointProperty": "endpoint",
         "connectionUriSecret": "connectionString"
@@ -1544,6 +1553,7 @@
       ]
     },
     "Radius.Data/postgreSqlDatabases": {
+      "sourceKind": "postgresql",
       "binding": {
         "databaseInput": "database",
         "hostProperty": "host",
@@ -1587,10 +1597,20 @@
         "sources": [
           "https://www.postgresql.org/docs/current/libpq-connect.html",
           "https://learn.microsoft.com/azure/postgresql/security/security-tls-how-to-connect"
+        ],
+        "setting": "connectionUri",
+        "satisfies": [
+          "host",
+          "port",
+          "database",
+          "username",
+          "password",
+          "sslmode"
         ]
       }
     },
     "Radius.Data/sqlServerDatabases": {
+      "sourceKind": "sql-server",
       "binding": {
         "databaseInput": "database",
         "hostProperty": "host",
@@ -1610,6 +1630,7 @@
       ]
     },
     "Radius.Messaging/kafka": {
+      "sourceKind": "kafka",
       "binding": {
         "bootstrapServersTransform": "<host>.servicebus.windows.net:9093",
         "connectionStringSecret": "connectionString",
@@ -1617,20 +1638,27 @@
       },
       "clientKind": "kafka-event-hubs",
       "requiredClientSettings": [
+        "bootstrapServers",
         "security.protocol=SASL_SSL",
         "sasl.mechanism=PLAIN",
         "jaas.username=$ConnectionString",
-        "jaas.password=managedSecret:connectionString"
+        "jaas.password=managedSecret:connectionString",
+        "sasl.jaas.config"
       ],
       "runtimeComposite": {
         "format": "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"<username>\" password=\"<password>\";",
         "managedSecret": "connectionString",
         "setting": "sasl.jaas.config",
         "source": "https://learn.microsoft.com/azure/event-hubs/azure-event-hubs-apache-kafka-overview",
-        "username": "$ConnectionString"
+        "username": "$ConnectionString",
+        "satisfies": [
+          "jaas.username",
+          "jaas.password"
+        ]
       }
     },
     "Radius.Storage/objectStorage": {
+      "sourceKind": "object-storage",
       "binding": {
         "accountKeySecret": "accountKey",
         "accountNameProperty": "accountName",
@@ -1643,7 +1671,10 @@
         "container",
         "accountName",
         "accountKeyOrConnectionString"
-      ]
+      ],
+      "definitionProperties": {
+        "container": "containerName"
+      }
     }
   }
 }

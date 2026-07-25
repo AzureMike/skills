@@ -20,22 +20,21 @@ CONTRACT_PATH = SKILL_DIR / "assets" / "radius-contract.json"
 SOURCE_SCHEMA_PATH = SKILL_DIR / "schemas" / "source-model.schema.json"
 PLAN_SCHEMA_PATH = SKILL_DIR / "schemas" / "resolved-plan.schema.json"
 
-DEPENDENCY_TYPES = {
-    "mysql": "Radius.Data/mySqlDatabases",
-    "postgresql": "Radius.Data/postgreSqlDatabases",
-    "sql-server": "Radius.Data/sqlServerDatabases",
-    "mongodb": "Radius.Data/mongoDatabases",
-    "redis": "Radius.Data/redisCaches",
-    "kafka": "Radius.Messaging/kafka",
-    "rabbitmq": "Radius.Messaging/rabbitMQ",
-    "ai-model": "Radius.AI/models",
-    "ai-search": "Radius.AI/search",
-    "object-storage": "Radius.Storage/objectStorage",
-}
-PROVIDER_INPUT_PROPERTIES = {
-    "ai-model": {"deploymentOrModel": "model"},
-    "object-storage": {"container": "containerName"},
-}
+def dependency_types(contract: dict[str, Any]) -> dict[str, str]:
+    """Map the source model's service names onto Radius types, per the contract.
+
+    Each protocol profile names the source-model ``kind`` it answers to, so a
+    backing service is added to this skill by describing it in the contract and
+    listing its name in the source-model schema. No code changes.
+    """
+
+    return {
+        profile["sourceKind"]: qualified
+        for qualified, profile in contract["protocolProfiles"].items()
+        if "sourceKind" in profile
+    }
+
+
 SECRET_NAME = re.compile(
     r"(?:^|_)(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|"
     r"CONNECTION_?STRING|CREDENTIAL)(?:$|_)",
@@ -93,6 +92,27 @@ def interpolation(parts: list[Any]) -> Expression:
 
 def pascal(value: str) -> str:
     return "".join(word.capitalize() for word in re.findall(r"[A-Za-z0-9]+", value))
+
+
+def screaming(value: str) -> str:
+    """connectionString -> CONNECTION_STRING, for environment variable names."""
+
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).replace(".", "_").upper()
+
+
+# Percent-encodes one argument using only POSIX shell builtins, for the case
+# where a URI component is not known until the container starts.
+PERCENT_ENCODER = (
+    "urlencode() { input=$1; output=''; LC_ALL=C; "
+    'while [ -n "$input" ]; do '
+    'char=${input%"${input#?}"}; input=${input#?}; '
+    'case "$char" in [a-zA-Z0-9.~_-]) '
+    'output="${output}${char}" ;; *) '
+    "code=$(printf '%d' \"'$char\"); "
+    "hex=$(printf '%02X' \"$((code & 255))\"); "
+    'output="${output}%${hex}" ;; esac; done; '
+    "printf '%s' \"$output\"; }; "
+)
 
 
 def bicep_string(value: str) -> str:
@@ -205,7 +225,7 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
         if not disposition:
             offered = sorted(
                 kind
-                for kind, qualified in DEPENDENCY_TYPES.items()
+                for kind, qualified in dependency_types(contract).items()
                 if qualified in {n.split("@", 1)[0] for n in contract["resourceTypes"]}
             )
             errors.append(
@@ -220,7 +240,7 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
         name.split("@", 1)[0] for name in contract["resourceTypes"]
     }
     for index, dependency in enumerate(model["dependencies"]):
-        qualified_type = DEPENDENCY_TYPES[dependency["kind"]]
+        qualified_type = dependency_types(contract)[dependency["kind"]]
         if qualified_type not in available_types:
             errors.append(
                 f"$.dependencies[{index}].kind: {qualified_type} is absent "
@@ -258,24 +278,13 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
                     f"$.dependencies[{index}].inputs[{input_index}]: "
                     "secret inputs must be developerInput"
                 )
-        if dependency["kind"] == "kafka":
-            required_slots = {
-                "bootstrapServers",
-                "security.protocol",
-                "sasl.mechanism",
-                "sasl.jaas.config",
-            }
-        elif dependency["kind"] == "postgresql" and "connectionUri" in slots:
-            required_slots = {"connectionUri"}
-        else:
-            profile = contract["protocolProfiles"].get(qualified_type, {})
-            required_slots = {
-                value.partition("=")[0]
-                for value in (
-                    profile.get("requiredClientSettings", [])
-                    + profile.get("runtimeRequiredClientSettings", [])
-                )
-            }
+        profile = contract["protocolProfiles"].get(qualified_type, {})
+        required_slots = contract_slots(profile)
+        # A composite carries several settings inside one value, so reporting
+        # it discharges the settings it absorbs.
+        for composite in (profile.get("runtimeUri"), profile.get("runtimeComposite")):
+            if composite and composite.get("setting") in slots:
+                required_slots -= set(composite.get("satisfies", []))
         missing = required_slots - set(slots)
         if missing:
             errors.append(
@@ -385,7 +394,7 @@ def plan_document(plan: dict[str, Any]) -> dict[str, Any]:
     ):
         selected.add("Radius.Compute/routes")
     selected.update(
-        DEPENDENCY_TYPES[item["kind"]] for item in model["dependencies"]
+        dependency_types(contract)[item["kind"]] for item in model["dependencies"]
     )
     available = {
         name.split("@", 1)[0]: name for name in contract["resourceTypes"]
@@ -405,7 +414,9 @@ def plan_document(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def default_input(dependency: dict[str, Any], name: str) -> str:
+def default_input(
+    contract: dict[str, Any], dependency: dict[str, Any], name: str
+) -> str:
     """Derive a deployable default for a name the definition has to invent.
 
     Preference order: the schema default published by the pinned contract, then
@@ -413,8 +424,7 @@ def default_input(dependency: dict[str, Any], name: str) -> str:
     application, so a repository never seen before gets the same treatment.
     """
 
-    contract = json.loads(CONTRACT_PATH.read_text())
-    qualified = DEPENDENCY_TYPES[dependency["kind"]]
+    qualified = dependency_types(contract)[dependency["kind"]]
     binding = (
         contract["protocolProfiles"].get(qualified, {}).get("binding", {})
     )
@@ -436,6 +446,7 @@ def default_input(dependency: dict[str, Any], name: str) -> str:
 
 
 def input_expression(
+    contract: dict[str, Any],
     dependency: dict[str, Any],
     name: str,
     parameters: dict[str, dict[str, Any]],
@@ -453,7 +464,7 @@ def input_expression(
         # user) still has to have *some* value, or the file cannot be deployed
         # without out-of-band input. Give it a default so it is deployable as
         # written and still overridable. Only a credential is left unset.
-        spec["default"] = default_input(dependency, name)
+        spec["default"] = default_input(contract, dependency, name)
     parameters.setdefault(parameter, spec)
     return Expression(parameter)
 
@@ -561,7 +572,7 @@ def setting_value(
     # Supplied by the definition, under the name the contract gives it.
     if f"{slot}Input" in binding:
         name = binding[f"{slot}Input"]
-        value = input_expression(dependency, name, parameters)
+        value = input_expression(contract, dependency, name, parameters)
         secure = bool(SECRET_NAME.search(name) or name == "password")
         return ("secret" if secure else "value"), value, None
 
@@ -572,7 +583,7 @@ def setting_value(
     # Named by the contract with no binding of its own: the definition supplies
     # it under the slot's own name.
     if slot in contract_slots(profile):
-        value = input_expression(dependency, slot, parameters)
+        value = input_expression(contract, dependency, slot, parameters)
         secure = bool(SECRET_NAME.search(slot) or slot == "password")
         return ("secret" if secure else "value"), value, None
 
@@ -629,7 +640,7 @@ def resolve(
 
     for dependency in model["dependencies"]:
         symbol = identifier(dependency["id"])
-        qualified_type = DEPENDENCY_TYPES[dependency["kind"]]
+        qualified_type = dependency_types(contract)[dependency["kind"]]
         recipe = contract["azureRecipeMappings"].get(qualified_type, {})
         name_parameter = symbol + "Name"
         parameters[name_parameter] = {"secure": False}
@@ -643,13 +654,16 @@ def resolve(
             .get("properties", {})
         )
         for item in dependency["inputs"]:
-            property_name = PROVIDER_INPUT_PROPERTIES.get(
-                dependency["kind"], {}
-            ).get(item["name"], item["name"])
+            property_name = (
+                contract["protocolProfiles"]
+                .get(qualified_type, {})
+                .get("definitionProperties", {})
+                .get(item["name"], item["name"])
+            )
             if property_name not in schema_properties:
                 continue
             properties[property_name] = input_expression(
-                dependency, item["name"], parameters
+                contract, dependency, item["name"], parameters
             )
         for property_name, definition in schema_properties.items():
             # A writable property carrying a schema default is part of the
@@ -753,78 +767,85 @@ def resolve(
                 item["slot"]: item for item in dependency["settings"]
             }
             skipped_slots: set[str] = set()
-            if (
-                dependency["kind"] == "postgresql"
-                and "connectionUri" in settings_by_slot
-            ):
-                uri = settings_by_slot["connectionUri"]
+            profile = contract["protocolProfiles"].get(qualified_type, {})
+            uri_spec = profile.get("runtimeUri")
+            if uri_spec and uri_spec.get("setting") in settings_by_slot:
+                uri = settings_by_slot[uri_spec["setting"]]
                 uri_key = uri["delivery"]["name"]
-                components = {
-                    component: setting_value(
+                chunks = [
+                    chunk
+                    for chunk in re.split(r"(<[A-Za-z0-9_]+>)", uri_spec["format"])
+                    if chunk
+                ]
+                names = [c[1:-1] for c in chunks if c.startswith("<")]
+                resolved: dict[str, tuple[str, Any, str | None]] = {}
+                for name in names:
+                    if name == "scheme":
+                        resolved[name] = ("value", uri["scheme"], None)
+                        continue
+                    resolved[name] = setting_value(
                         dependency=dependency,
-                        slot=component,
+                        slot=name,
                         symbol=symbol,
                         qualified_type=qualified_type,
                         contract=contract,
                         parameters=parameters,
                     )
-                    for component in ("host", "username", "password", "database")
+                encode = set(uri_spec.get("percentEncode", []))
+                deferred = {
+                    name
+                    for name, (kind, _, _) in resolved.items()
+                    if kind == "managedSecret"
                 }
-                port_literal = contract["protocolProfiles"][qualified_type][
-                    "binding"
-                ]["portLiteral"]
-                if not any(kind == "managedSecret" for kind, _, _ in components.values()):
-                    # Every component is a value this definition supplies, so it
-                    # is known at compile time and known to be URI-safe. Compose
-                    # the URI directly instead of shipping a shell encoder that
-                    # would also force a wrapper onto an imageDefault process.
+                if not deferred:
+                    # Every component is known where this file is authored, so
+                    # compose the URI here. Encoding at runtime would require a
+                    # shell wrapper, and that displaces the image's own
+                    # entrypoint for no gain.
                     env[uri_key] = {
                         "value": interpolation(
                             [
-                                uri["scheme"] + "://",
-                                components["username"][1],
-                                ":",
-                                components["password"][1],
-                                "@",
-                                components["host"][1],
-                                ":" + str(port_literal) + "/",
-                                components["database"][1],
-                                "?sslmode=require",
+                                resolved[c[1:-1]][1] if c.startswith("<") else c
+                                for c in chunks
                             ]
                         )
                     }
                     ledger.append(
                         {
-                            "name": "connectionUri",
+                            "name": uri_spec["setting"],
                             "evidence": uri["citation"],
                             "delivery": {"kind": "env", "key": uri_key},
                         }
                     )
-                    skipped_slots.add("connectionUri")
-                    for component in ("host", "username", "password", "database"):
-                        skipped_slots.add(component)
-                    continue_direct = True
                 else:
-                    continue_direct = False
-                if not continue_direct:
-                    helpers = {
-                        component: (
-                            f"RADIUS_{symbol.upper()}_{component.upper()}"
-                        )
-                        for component in ("host", "username", "password", "database")
-                    }
-                    component_ledger: list[dict[str, Any]] = []
-                    for component in ("host", "username", "password", "database"):
-                        value_kind, value, _ = setting_value(
-                            dependency=dependency,
-                            slot=component,
-                            symbol=symbol,
-                            qualified_type=qualified_type,
-                            contract=contract,
-                            parameters=parameters,
-                        )
-                        key = helpers[component]
-                        if value_kind == "secret":
+                    # At least one component exists only as a secret reference
+                    # at runtime, so the URI has to be assembled there.
+                    helpers: dict[str, str] = {}
+                    inline: dict[str, str] = {}
+                    for name in names:
+                        if name == "scheme":
+                            continue
+                        kind, value, managed_key = resolved[name]
+                        if kind == "value" and not isinstance(value, Expression):
+                            inline[name] = str(environment_value(value))
+                            continue
+                        key = f"RADIUS_{symbol.upper()}_{screaming(name)}"
+                        helpers[name] = key
+                        if kind == "managedSecret":
+                            env[key] = {
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "secretName": value,
+                                        "key": managed_key,
+                                    }
+                                }
+                            }
+                            delivery = {
+                                "kind": "secretKeyRef",
+                                "key": key,
+                                "secretKey": managed_key,
+                            }
+                        elif kind == "secret":
                             secret_key = workload_symbol + "_" + key
                             secret_entries[secret_key] = {"value": value}
                             env[key] = {
@@ -837,131 +858,111 @@ def resolve(
                                     }
                                 }
                             }
-                            requirements["secretEnvironment"].append({"key": key})
                             delivery = {
                                 "kind": "secretKeyRef",
                                 "key": key,
                                 "secretKey": secret_key,
                             }
                         else:
-                            env[key] = {"value": value}
+                            env[key] = {"value": environment_value(value)}
                             delivery = {"kind": "env", "key": key}
-                        component_ledger.append(
+                        if delivery["kind"] == "secretKeyRef":
+                            requirements["secretEnvironment"].append({"key": key})
+                        ledger.append(
                             {
-                                "name": component,
+                                "name": name,
                                 "evidence": uri["citation"],
                                 "delivery": delivery,
                             }
                         )
-                    port = (
-                        contract["protocolProfiles"][qualified_type]["binding"][
-                            "portLiteral"
-                        ]
-                    )
-                    shell_encoder = (
-                        "urlencode() { input=$1; output=''; LC_ALL=C; "
-                        "while [ -n \"$input\" ]; do "
-                        "char=${input%\"${input#?}\"}; input=${input#?}; "
-                        "case \"$char\" in [a-zA-Z0-9.~_-]) "
-                        "output=\"${output}${char}\" ;; *) "
-                        "code=$(printf '%d' \"'$char\"); "
-                        "hex=$(printf '%02X' \"$((code & 255))\"); "
-                        "output=\"${output}%${hex}\" ;; esac; done; "
-                        "printf '%s' \"$output\"; }; "
-                        f'RADIUS_URI_USERNAME=$(urlencode "${helpers["username"]}"); '
-                        f'RADIUS_URI_PASSWORD=$(urlencode "${helpers["password"]}"); '
-                        f'RADIUS_URI_DATABASE=$(urlencode "${helpers["database"]}"); '
-                        f'export {uri_key}="{uri["scheme"]}://'
-                        f'${{RADIUS_URI_USERNAME}}:${{RADIUS_URI_PASSWORD}}@'
-                        f'${{{helpers["host"]}}}:{port}/'
-                        '${RADIUS_URI_DATABASE}?sslmode=require"'
-                    )
-                    runtime_wrappers.append(shell_encoder)
-                    ledger.extend(
-                        component_ledger
-                        + [
-                            {
-                                "name": "port",
-                                "evidence": uri["citation"],
-                                "delivery": {
-                                    "kind": "runtimeConfig",
-                                    "key": uri_key,
-                                    "value": port,
-                                },
+                    encoded = sorted(encode & set(helpers))
+                    assembled = ""
+                    for chunk in chunks:
+                        if not chunk.startswith("<"):
+                            assembled += chunk
+                        elif chunk[1:-1] == "scheme":
+                            assembled += uri["scheme"]
+                        elif chunk[1:-1] in inline:
+                            assembled += inline[chunk[1:-1]]
+                        elif chunk[1:-1] in encode:
+                            assembled += "${RADIUS_ENC_" + screaming(chunk[1:-1]) + "}"
+                        else:
+                            assembled += "${" + helpers[chunk[1:-1]] + "}"
+                    shell = PERCENT_ENCODER if encoded else ""
+                    for name in encoded:
+                        shell += (
+                            f"RADIUS_ENC_{screaming(name)}="
+                            f'$(urlencode "${{{helpers[name]}}}"); '
+                        )
+                    runtime_wrappers.append(shell + f'export {uri_key}="{assembled}"')
+                    ledger.append(
+                        {
+                            "name": uri_spec["setting"],
+                            "evidence": uri["citation"],
+                            "delivery": {
+                                "kind": "runtimeConfig",
+                                "key": uri_key,
+                                "value": uri["scheme"] + "://",
                             },
-                            {
-                                "name": "sslmode",
-                                "evidence": uri["citation"],
-                                "delivery": {
-                                    "kind": "runtimeConfig",
-                                    "key": uri_key,
-                                    "value": "require",
-                                },
-                            },
-                            {
-                                "name": "connectionUri",
-                                "evidence": uri["citation"],
-                                "delivery": {
-                                    "kind": "runtimeConfig",
-                                    "key": uri_key,
-                                    "value": f"{uri['scheme']}://",
-                                },
-                            },
-                        ]
+                        }
                     )
-                    skipped_slots.add("connectionUri")
-            if dependency["kind"] == "kafka":
-                composite = settings_by_slot["sasl.jaas.config"]
+                skipped_slots.add(uri_spec["setting"])
+                skipped_slots.update(names)
+                skipped_slots.update(uri_spec.get("satisfies", []))
+
+            composite_spec = profile.get("runtimeComposite")
+            if composite_spec and composite_spec.get("setting") in settings_by_slot:
+                composite = settings_by_slot[composite_spec["setting"]]
                 composite_key = composite["delivery"]["name"]
-                spec = contract["protocolProfiles"][qualified_type]["runtimeComposite"]
-                secret_key = f"RADIUS_{symbol.upper()}_CONNECTION_STRING"
+                managed = composite_spec["managedSecret"]
+                secret_key = f"RADIUS_{symbol.upper()}_{screaming(managed)}"
                 env[secret_key] = {
                     "valueFrom": {
                         "secretKeyRef": {
                             "secretName": Expression(
                                 f"{symbol}.properties.secrets.name"
                             ),
-                            "key": spec["managedSecret"],
+                            "key": managed,
                         }
                     }
                 }
                 requirements["secretEnvironment"].append({"key": secret_key})
-                # The composite is pure concatenation - no component declares
-                # percentEncode - so it is delivered as a plain env value that
-                # references the secret env var. Only composites that need a
-                # transform require a shell process.
-                env[composite_key] = {
-                    "value": (
-                        spec["format"]
-                        .replace("<username>", spec["username"])
-                        .replace("<" + "password" + ">", "${" + secret_key + "}")
+                # Pure concatenation, so the value can reference the secret
+                # environment variable directly. Only a composite that has to
+                # transform a component needs a shell process.
+                rendered = composite_spec["format"]
+                for name in re.findall(r"<([A-Za-z0-9_]+)>", rendered):
+                    replacement = (
+                        str(composite_spec[name])
+                        if name in composite_spec
+                        else "${" + secret_key + "}"
                     )
-                }
-                ledger.extend(
-                    [
+                    rendered = rendered.replace(f"<{name}>", replacement)
+                env[composite_key] = {"value": rendered}
+                for name in composite_spec.get("satisfies", []):
+                    short = name.rpartition(".")[2]
+                    ledger.append(
                         {
-                            "name": "jaas.username",
+                            "name": name,
                             "evidence": composite["citation"],
                             "delivery": {
                                 "kind": "runtimeConfig",
                                 "key": composite_key,
-                                "value": "$ConnectionString",
-                            },
-                        },
-                        {
-                            "name": "jaas.password",
-                            "evidence": composite["citation"],
-                            "delivery": {
+                                "value": composite_spec[short],
+                            }
+                            if short in composite_spec
+                            else {
                                 "kind": "secretKeyRef",
                                 "key": secret_key,
-                                "secretKey": "connectionString",
+                                "secretKey": managed,
                             },
-                        },
-                    ]
-                )
+                        }
+                    )
+                skipped_slots.add(composite_spec["setting"])
+
 
             for slot, setting in settings_by_slot.items():
-                if slot == "sasl.jaas.config" or slot in skipped_slots:
+                if slot in skipped_slots:
                     continue
                 delivery = setting["delivery"]
                 if delivery["kind"] == "sourceDefault":
