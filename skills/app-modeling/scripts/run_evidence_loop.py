@@ -4010,69 +4010,27 @@ and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
 def supervised_main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--target", default=".")
-    parser.add_argument("--request", required=True)
     parser.add_argument("--deadline-seconds", type=float, default=360)
     parser.add_argument("--artifact-dir")
     args, _ = parser.parse_known_args()
     target = Path(args.target).resolve()
-    repository_root_process = subprocess.run(
-        ["git", "-C", str(target), "rev-parse", "--show-toplevel"],
-        text=True,
-        capture_output=True,
-        timeout=5,
-        check=False,
-    )
-    commit_process = subprocess.run(
-        ["git", "-C", str(target), "rev-parse", "HEAD"],
-        text=True,
-        capture_output=True,
-        timeout=5,
-        check=False,
-    )
-    git_dir_process = subprocess.run(
-        ["git", "-C", str(target), "rev-parse", "--git-dir"],
-        text=True,
-        capture_output=True,
-        timeout=5,
-        check=False,
-    )
-    if any(
-        process.returncode
-        for process in (
-            repository_root_process,
-            commit_process,
-            git_dir_process,
-        )
-    ):
-        print(json.dumps({"status": "failed", "reason": "target is not in Git"}))
-        return 1
-    repository_root = Path(repository_root_process.stdout.strip()).resolve()
-    source_path_value = target.relative_to(repository_root)
-    source_path = (
-        source_path_value.as_posix() if source_path_value.parts else "."
-    )
-    git_dir = Path(git_dir_process.stdout.strip())
-    if not git_dir.is_absolute():
-        git_dir = (repository_root / git_dir).resolve()
-    receipt = receipt_path(
-        git_dir,
-        commit=commit_process.stdout.strip(),
-        source_path=source_path,
-        request=args.request,
-    )
-    if receipt.is_file():
-        try:
-            cached = json.loads(receipt.read_text())
-        except (OSError, json.JSONDecodeError):
-            cached = None
-        if isinstance(cached, dict):
-            print(json.dumps(cached, sort_keys=True))
-            return 0 if cached.get("status") == "accepted" else 1
-
     if args.artifact_dir:
         run_dir = Path(args.artifact_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
+        git_dir_process = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "--git-dir"],
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        if git_dir_process.returncode:
+            print(json.dumps({"status": "failed", "reason": "target is not in Git"}))
+            return 1
+        git_dir = Path(git_dir_process.stdout.strip())
+        if not git_dir.is_absolute():
+            git_dir = (target / git_dir).resolve()
         run_dir = (
             git_dir
             / "app-modeling-runs"
@@ -4102,22 +4060,6 @@ def supervised_main() -> int:
     sys.stdout.write(stdout)
     sys.stderr.write(stderr)
     if not timed_out:
-        result = None
-        for line in reversed(stdout.splitlines()):
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict) and value.get("status"):
-                result = value
-                break
-        if result is None:
-            result = {
-                "status": "failed",
-                "reason": "supervised child returned no final status",
-                "artifacts": str(run_dir),
-            }
-        write_json(receipt, result)
         return status
 
     remove_agents(
@@ -4131,7 +4073,6 @@ def supervised_main() -> int:
         "deadlineSeconds": args.deadline_seconds,
     }
     write_json(run_dir / "run-status.json", result)
-    write_json(receipt, result)
     print(json.dumps(result, sort_keys=True))
     return 124
 
