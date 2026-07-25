@@ -28,9 +28,13 @@ Trace each selected image's effective ENTRYPOINT and CMD. Put every required
 absolute startup configuration path in top-level `facts.startupFiles` as
 `{"workload":"...","path":"/...","required":true,
 "delivery":"image|runtimeGenerated|operatorConfig","presentInImage":true,
-"citation":"path:line"}`; return `startupFiles: []` only after proving the
+"citation":"path:line","profileSelectedBy":"request|canonicalProduction",
+"contentCitation":"path:line"}`; return `startupFiles: []` only after proving the
 selected process needs no file. Use `image` only when a cited clean-checkout
-COPY/ADD or exact release image proves the path is present. Use
+COPY/ADD or exact release image proves the path is present and a separate
+content citation proves the request or canonical production profile selected
+that configuration. A bundled default, smoke, stdin/stdout, or example config
+is not a canonical production selection. Use
 `runtimeGenerated` when cited source supplies complete selected-profile
 content. For a configurable engine whose required configuration is deliberately
 operator-defined and the request selects no complete repository profile, use

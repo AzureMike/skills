@@ -426,6 +426,37 @@ def image_provides_startup_file(
     return False
 
 
+def startup_content_is_selected(
+    item: dict[str, Any],
+    *,
+    source_root: Path,
+    source_path: str,
+) -> bool:
+    if item.get("profileSelectedBy") not in {"request", "canonicalProduction"}:
+        return False
+    citations = item.get("contentCitation")
+    if isinstance(citations, str):
+        citations = [citations]
+    if not isinstance(citations, list):
+        return False
+    application_root = (
+        source_root if source_path in {"", "."} else source_root / source_path
+    )
+    for citation in citations:
+        if not isinstance(citation, str):
+            continue
+        name = re.sub(r":\d+(?:-\d+)?$", "", citation)
+        for path in (application_root / name, source_root / name):
+            resolved = path.resolve()
+            try:
+                resolved.relative_to(source_root.resolve())
+            except ValueError:
+                continue
+            if resolved.is_file():
+                return True
+    return False
+
+
 def reconcile_startup_file_delivery(
     evidence: dict[str, Any],
     *,
@@ -438,17 +469,25 @@ def reconcile_startup_file_delivery(
     for item in startup_files:
         if not isinstance(item, dict) or item.get("delivery") != "image":
             continue
-        if image_provides_startup_file(
+        image_proven = image_provides_startup_file(
             evidence,
             item,
             source_root=source_root,
             source_path=source_path,
-        ):
+        )
+        content_selected = startup_content_is_selected(
+            item,
+            source_root=source_root,
+            source_path=source_path,
+        )
+        if image_proven and content_selected:
             continue
         item["delivery"] = "operatorConfig"
         item.pop("presentInImage", None)
         item["mechanicalReason"] = (
-            "selected Dockerfile does not COPY or ADD the required file"
+            "required file lacks selected production content provenance"
+            if image_proven
+            else "selected Dockerfile does not COPY or ADD the required file"
         )
         changes.append(
             {
@@ -494,11 +533,18 @@ def validate_startup_input_closure(
         required_paths.add(path)
         delivery = str(item.get("delivery", "")).strip()
         if delivery == "image" and item.get("presentInImage") is True:
-            if source_root is not None and image_provides_startup_file(
-                evidence,
-                item,
-                source_root=source_root,
-                source_path=source_path,
+            if source_root is not None and (
+                image_provides_startup_file(
+                    evidence,
+                    item,
+                    source_root=source_root,
+                    source_path=source_path,
+                )
+                and startup_content_is_selected(
+                    item,
+                    source_root=source_root,
+                    source_path=source_path,
+                )
             ):
                 continue
             errors.append(
@@ -507,8 +553,8 @@ def validate_startup_input_closure(
                     "path": f"$.sourceFacts.startupFiles[{index}]",
                     "message": (
                         f"Independent evidence claims {path} is image-provided, "
-                        "but the cited selected Dockerfile does not COPY or ADD "
-                        "that file."
+                        "but the selected Dockerfile and production-content "
+                        "citations do not prove that claim."
                     ),
                 }
             )
