@@ -87,6 +87,14 @@ Radius schema enum: omit an optional provider version input, or fail if the
 contract requires a production version that source evidence cannot select.
 Preserve entrypoint and CMD semantics, required build files, Git metadata, and
 target platform.
+Close every `facts.startupInputs` entry. Keep an image-provided path only when
+the evidence explicitly proves `presentInImage: true`. Generate a
+`runtimeGenerated` file from its cited complete source content before exec. For
+`operatorConfig`, declare an `@secure()` configuration parameter, store it in
+an authored `Radius.Security/secrets` resource, bind a non-native helper
+environment variable with `secretKeyRef`, write it to the cited path, then exec
+the exact selected process. Never silently use an image default that references
+a missing file, and never invent configuration content or an optional adapter.
 Build context is relative to the Git remote root, not merely the supplied
 application directory. Prefix a source-relative context with the supplied
 `Application path within remote`; for example application `samples/demo` plus

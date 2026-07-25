@@ -24,6 +24,20 @@ semantics, secrets, protocol/TLS/auth tuples, composite values, writable and
 persistent paths. Return concise JSON facts with file-and-line evidence and
 explicit blockers.
 
+Trace each selected image's effective ENTRYPOINT and CMD. Put every required
+absolute startup configuration path in top-level `facts.startupInputs` as
+`{"workload":"...","path":"/...","required":true,
+"delivery":"image|runtimeGenerated|operatorConfig","presentInImage":true,
+"citation":"path:line"}`; return `startupInputs: []` only after proving the
+selected process needs no file. Use `image` only when a cited clean-checkout
+COPY/ADD or exact release image proves the path is present. Use
+`runtimeGenerated` when cited source supplies complete selected-profile
+content. For a configurable engine whose required configuration is deliberately
+operator-defined and the request selects no complete repository profile, use
+`operatorConfig`; do not invent an adapter or dependency. Treat an unresolved
+required file as a source blocker rather than claiming that an image can start
+without it.
+
 This turn is source analysis only. Do not select Radius types, inspect the
 verified contract, or run `contract_query.py`; the parent resolves Radius
 contracts mechanically after source facts are complete. Represent every
@@ -98,7 +112,10 @@ Reject missing or extra workloads/dependencies, unusable Docker builds, changed
 entrypoint semantics, missing native settings, incomplete protocol tuples,
 unverified outputs or secret keys, secure values placed directly in container
 environment values, Bicep-composed credentials, missing persistence, and
-missing graph relationships. A replacement recommendation must cover endpoint,
+missing graph relationships. Reject a required startup path unless the cited
+immutable image contains it or the candidate creates it before exec. Require
+operator-defined configuration to enter through a secure parameter, an
+authored secret, and `secretKeyRef`. A replacement recommendation must cover endpoint,
 port, protocol, TLS, auth, secrets, persistence, process, native settings, and
 graph impact together.
 

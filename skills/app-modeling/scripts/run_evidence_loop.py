@@ -330,6 +330,91 @@ def validate_evidence_candidate(
     return errors
 
 
+def validate_startup_input_closure(
+    candidate: Path,
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Require every selected startup configuration file to be available."""
+
+    source = (candidate / "app.bicep").read_text()
+    facts = evidence.get("facts")
+    startup_inputs = facts.get("startupInputs", []) if isinstance(facts, dict) else []
+    errors: list[dict[str, str]] = []
+    required_paths: set[str] = set()
+
+    def provisions(path: str) -> bool:
+        quoted_path = rf"['\"]?{re.escape(path)}['\"]?"
+        patterns = (
+            rf"\b(?:cat|printf)\b[\s\S]{{0,500}}?>\s*{quoted_path}",
+            rf"\btee(?:\s+-[A-Za-z]+)*\s+{quoted_path}",
+            rf"\b(?:cp|install)\b[^\n;]{{0,500}}\s+{quoted_path}",
+        )
+        return any(re.search(pattern, source) for pattern in patterns)
+
+    for index, item in enumerate(startup_inputs):
+        if not isinstance(item, dict) or item.get("required") is False:
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or not path.startswith("/"):
+            continue
+        required_paths.add(path)
+        delivery = str(item.get("delivery", "")).strip()
+        if delivery == "image" and item.get("presentInImage") is True:
+            continue
+        if not provisions(path):
+            errors.append(
+                {
+                    "code": "STARTUP_INPUT",
+                    "path": f"$.sourceFacts.startupInputs[{index}]",
+                    "message": (
+                        f"Selected startup requires {path}, but the candidate "
+                        "neither creates it before exec nor cites it as present "
+                        "in the immutable image."
+                    ),
+                }
+            )
+            continue
+        if delivery == "operatorConfig" and not (
+            "@secure()" in source
+            and "Radius.Security/secrets@" in source
+            and "secretKeyRef:" in source
+        ):
+            errors.append(
+                {
+                    "code": "STARTUP_INPUT_SECURITY",
+                    "path": f"$.sourceFacts.startupInputs[{index}]",
+                    "message": (
+                        f"Operator-supplied startup configuration for {path} "
+                        "must enter through a secure parameter and secretKeyRef."
+                    ),
+                }
+            )
+
+    referenced_paths = set(
+        re.findall(
+            r"(?<![A-Za-z0-9_.-])"
+            r"(/[A-Za-z0-9_./-]+\.(?:ya?ml|json|toml|conf|ini))\b",
+            source,
+            flags=re.IGNORECASE,
+        )
+    )
+    for path in sorted(referenced_paths - required_paths):
+        if provisions(path):
+            continue
+        errors.append(
+            {
+                "code": "UNPROVEN_STARTUP_INPUT",
+                "path": "$.app.bicep",
+                "message": (
+                    f"Candidate references startup configuration {path}, but "
+                    "independent evidence does not prove it is image-provided "
+                    "and the candidate does not create it."
+                ),
+            }
+        )
+    return errors
+
+
 def validate_all(
     candidate: Path,
     run_dir: Path,
@@ -347,6 +432,7 @@ def validate_all(
         source_path=source_path,
     )
     report["errors"].extend(validate_evidence_candidate(candidate, evidence))
+    report["errors"].extend(validate_startup_input_closure(candidate, evidence))
     report["valid"] = not report["errors"]
     return report
 
@@ -634,6 +720,48 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
         facts = value["facts"]
         if not isinstance(facts.get("workloads"), list) or not facts["workloads"]:
             errors.append("facts.workloads must contain the selected workloads")
+        startup_inputs = facts.get("startupInputs")
+        if not isinstance(startup_inputs, list):
+            errors.append(
+                "facts.startupInputs must list required startup files or be []"
+            )
+        else:
+            for index, item in enumerate(startup_inputs):
+                if not isinstance(item, dict):
+                    errors.append(f"facts.startupInputs[{index}] must be an object")
+                    continue
+                if not isinstance(item.get("workload"), str):
+                    errors.append(
+                        f"facts.startupInputs[{index}].workload must be a string"
+                    )
+                path = item.get("path")
+                if not isinstance(path, str) or not path.startswith("/"):
+                    errors.append(
+                        f"facts.startupInputs[{index}].path must be absolute"
+                    )
+                if item.get("required") is not True:
+                    errors.append(
+                        f"facts.startupInputs[{index}].required must be true"
+                    )
+                if item.get("delivery") not in {
+                    "image",
+                    "runtimeGenerated",
+                    "operatorConfig",
+                }:
+                    errors.append(
+                        f"facts.startupInputs[{index}].delivery is invalid"
+                    )
+                if not isinstance(item.get("citation"), str):
+                    errors.append(
+                        f"facts.startupInputs[{index}].citation must be a string"
+                    )
+                if (
+                    item.get("delivery") == "image"
+                    and item.get("presentInImage") is not True
+                ):
+                    errors.append(
+                        f"facts.startupInputs[{index}] lacks image-presence proof"
+                    )
     if not isinstance(value.get("blockers"), list):
         errors.append("evidence blockers must be an array")
     return errors
@@ -1906,8 +2034,8 @@ Expected/golden application definitions are unavailable.
                     + "; ".join(evidence_errors)
                     + ". Do not use tools. Restate the completed evidence as one "
                     "compact valid JSON object with status, blockers, and facts "
-                    "containing workloads, dependencies, route, and "
-                    "persistentPaths. Preserve all already closed citations."
+                    "containing workloads, startupInputs, dependencies, route, "
+                    "and persistentPaths. Preserve all already closed citations."
                 )
             else:
                 retry_prompt = (

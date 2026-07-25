@@ -58,6 +58,8 @@ artifact directory.
 - Preserve source-native ports, configuration names and values, protocols,
   authentication, secrets, routes, writable persistence, entrypoints, and
   dependency relationships.
+- Prove every required startup file is present in the selected immutable image
+  or create it from cited or securely supplied configuration before exec.
 - Build application images from an immutable clean-checkout source, or use an
   exact immutable first-party release image only when the source Dockerfile
   cannot build without an externally generated artifact.

@@ -24,6 +24,11 @@ invented environment/configuration keys absent from source, wrong Recipe
 outputs or exposed secret keys, insecure values, Bicep-composed credentials,
 shell `$${...}` PID expansion, missing persistence, and missing graph
 relationships. Compilation is necessary but not sufficient.
+For each independent `startupInputs` fact, reject the candidate unless the
+cited immutable image contains the path or the candidate creates it before
+executing the selected process. Reject operator-defined configuration unless
+it is supplied by a secure parameter through an authored secret and
+`secretKeyRef`; never accept an invented adapter or configuration body.
 For every contract binding key ending in `Transform`, require the candidate to
 preserve all literal text around the referenced Recipe output.
 For a shell-built composite, interpret the compiled shell rather than the
