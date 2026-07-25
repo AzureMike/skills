@@ -1340,7 +1340,7 @@ def main() -> int:
     parser.add_argument("--evidence-timeout", type=float, default=100)
     parser.add_argument("--author-timeout", type=float, default=200)
     parser.add_argument("--review-timeout", type=float, default=100)
-    parser.add_argument("--repair-timeout", type=float, default=55)
+    parser.add_argument("--repair-timeout", type=float, default=90)
     parser.add_argument("--final-review-timeout", type=float, default=100)
     parser.add_argument("--artifact-dir")
     args = parser.parse_args()
@@ -1742,28 +1742,27 @@ Return a compact audit JSON for {candidate / 'app.bicep'} using only
             write_json(run_dir / "review-retry.json", review)
 
         if not validation.get("valid") or review.get("verdict") == "rejected":
+            repair_session = str(uuid.uuid4())
             repair_invocation = invoke(
                 target=target,
                 run_dir=run_dir,
                 label="writer-repair",
                 agent="radius-model-writer",
-                session_id=writer_session,
+                session_id=repair_session,
                 prompt=f"""
-Repair every item in {run_dir / 'validation-1.json'} and
-{run_dir / 'review-1.json'} once. Change only fields required by those findings;
-preserve every validator-clean source, secret, protocol, persistence, process,
-and graph binding from the initial candidate. Reconcile the full tuple only
-when a cited finding changes its representation. Do not read validator source
-or rescan the repository.
+Repair the existing four-file candidate in {candidate} once using
+{run_dir / 'reviewer-evidence.json'}, {run_dir / 'authoring-contract.json'},
+{run_dir / 'validation-1.json'}, and {run_dir / 'review-1.json'}.
+Change only fields required by those findings; preserve every validator-clean
+source, secret, protocol, persistence, process, and graph binding. Reconcile
+the full tuple only when a cited finding changes its representation. Do not
+read validator source or rescan the repository. Return after updating the
+candidate files.
 """,
                 timeout=min(args.repair_timeout, remaining(deadline)),
-                resume=True,
                 effort="low",
             )
             status["repair"] = public_invocation(repair_invocation)
-            if repair_invocation["processExit"] != 0:
-                status["reason"] = "repair failed"
-                return 1
             shutil.copytree(candidate, run_dir / "candidate-repaired")
             reconciliation = reconcile_requirements(candidate, authoring_contract)
             reconciliation["optionalVersionChanges"] = (
@@ -1792,6 +1791,11 @@ or rescan the repository.
                 source_path=source_path,
             )
             write_json(run_dir / "validation-2.json", validation)
+            if repair_invocation["processExit"] != 0 and validation.get("valid"):
+                status["repairRecoveredFromExit"] = repair_invocation[
+                    "processExit"
+                ]
+            auditor_session = str(uuid.uuid4())
             final_invocation = invoke(
                 target=target,
                 run_dir=run_dir,
@@ -1806,7 +1810,6 @@ Audit the repaired {candidate / 'app.bicep'},
 and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
 """,
                 timeout=min(args.final_review_timeout, remaining(deadline)),
-                resume=True,
                 effort="low",
             )
             status["finalReview"] = public_invocation(final_invocation)
