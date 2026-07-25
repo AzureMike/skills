@@ -3399,7 +3399,7 @@ def main() -> int:
     parser.add_argument("--author-timeout", type=float, default=100)
     parser.add_argument("--review-timeout", type=float, default=45)
     parser.add_argument("--repair-timeout", type=float, default=60)
-    parser.add_argument("--final-review-timeout", type=float, default=30)
+    parser.add_argument("--final-review-timeout", type=float, default=45)
     parser.add_argument("--artifact-dir")
     parser.add_argument("--supervised-child", action="store_true")
     args = parser.parse_args()
