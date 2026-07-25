@@ -85,6 +85,39 @@ def receipt_path(
     )
 
 
+def exact_tags(target: Path, remote: str, commit: str) -> list[str]:
+    local = subprocess.run(
+        ["git", "-C", str(target), "tag", "--points-at", commit],
+        text=True,
+        capture_output=True,
+        check=False,
+    ).stdout.splitlines()
+    if local or not remote:
+        return sorted(set(local))
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", remote],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return []
+    if result.returncode:
+        return []
+    tags = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2 or fields[0] != commit:
+            continue
+        reference = fields[1]
+        if not reference.startswith("refs/tags/"):
+            continue
+        tags.append(reference.removeprefix("refs/tags/").removesuffix("^{}"))
+    return sorted(set(tags))
+
+
 def public_invocation(value: dict[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "finalText"}
 
@@ -1341,12 +1374,7 @@ def main() -> int:
         capture_output=True,
         check=False,
     ).stdout.strip()
-    tags = subprocess.run(
-        ["git", "-C", str(target), "tag", "--points-at", commit],
-        text=True,
-        capture_output=True,
-        check=False,
-    ).stdout.splitlines()
+    tags = exact_tags(target, remote, commit)
     receipt: Path | None = None
     if args.artifact_dir:
         run_dir = Path(args.artifact_dir).resolve()
@@ -1399,6 +1427,7 @@ def main() -> int:
         "reason": None,
         "artifacts": str(run_dir),
         "sourceCommit": commit,
+        "sourceTags": tags,
         "request": args.request,
     }
     common = f"""
