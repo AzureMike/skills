@@ -2817,147 +2817,6 @@ def selected_dependency_fact(
     return matching[0] if len(matching) == 1 else None
 
 
-def cited_source_excerpt(
-    value: dict[str, Any],
-    *,
-    source_root: Path,
-    source_path: str,
-    max_lines: int = 240,
-) -> tuple[str, list[str]]:
-    citations: list[str] = []
-
-    def collect(item: Any, key: str = "") -> None:
-        if isinstance(item, dict):
-            for child_key, child in item.items():
-                collect(child, str(child_key))
-        elif isinstance(item, list):
-            for child in item:
-                collect(child, key)
-        elif isinstance(item, str) and key.lower().endswith(
-            ("citation", "citations")
-        ):
-            citations.append(item)
-
-    collect(value)
-    application_root = (
-        source_root if source_path in {"", "."} else source_root / source_path
-    )
-    resolved_root = source_root.resolve()
-    excerpts: list[str] = []
-    used: list[str] = []
-    remaining_lines = max_lines
-    seen: set[tuple[Path, int, int]] = set()
-    for citation in citations:
-        match = re.fullmatch(r"(.+?):([1-9][0-9]*)(?:-([1-9][0-9]*))?", citation)
-        if not match:
-            continue
-        start = int(match.group(2))
-        end = int(match.group(3) or start)
-        if end < start or end - start + 1 > 80:
-            continue
-        for unresolved in (
-            application_root / match.group(1),
-            source_root / match.group(1),
-        ):
-            resolved = unresolved.resolve()
-            try:
-                resolved.relative_to(resolved_root)
-            except ValueError:
-                continue
-            key = (resolved, start, end)
-            if key in seen or not resolved.is_file() or remaining_lines <= 0:
-                continue
-            seen.add(key)
-            selected: list[str] = []
-            try:
-                with resolved.open(errors="replace") as handle:
-                    for number, line in enumerate(handle, start=1):
-                        if number > end:
-                            break
-                        if number >= start:
-                            selected.append(line[:8192])
-            except OSError:
-                continue
-            if len(selected) != end - start + 1:
-                continue
-            if len(selected) > remaining_lines:
-                continue
-            excerpts.extend(selected)
-            remaining_lines -= len(selected)
-            used.append(citation)
-            break
-    return "".join(excerpts), used
-
-
-def rewrite_environment_entries(
-    source: str,
-    *,
-    renames: dict[str, str],
-    removals: set[str],
-) -> str | None:
-    if set(renames) & removals or len(set(renames.values())) != len(renames):
-        return None
-    lines = source.splitlines(keepends=True)
-    occurrences: dict[str, list[tuple[int, int]]] = {
-        key: [] for key in set(renames) | removals
-    }
-    for env_index, line in enumerate(lines):
-        match = re.match(r"^(\s*)env\s*:\s*\{\s*$", line)
-        if not match:
-            continue
-        key_indent = match.group(1) + "  "
-        depth = 0
-        env_end = None
-        for index in range(env_index, len(lines)):
-            depth += lines[index].count("{") - lines[index].count("}")
-            if index > env_index and depth == 0:
-                env_end = index
-                break
-        if env_end is None:
-            continue
-        index = env_index + 1
-        while index < env_end:
-            key_match = re.match(
-                rf"^{re.escape(key_indent)}(?:'([^']+)'|\"([^\"]+)\"|"
-                r"([A-Za-z_][A-Za-z0-9_]*))\s*:\s*\{\s*$",
-                lines[index],
-            )
-            if not key_match:
-                index += 1
-                continue
-            key = next(item for item in key_match.groups() if item)
-            entry_depth = 0
-            entry_end = index
-            while entry_end < env_end:
-                entry_depth += (
-                    lines[entry_end].count("{") - lines[entry_end].count("}")
-                )
-                if entry_end > index and entry_depth == 0:
-                    break
-                entry_end += 1
-            if key in occurrences:
-                occurrences[key].append((index, entry_end + 1))
-            index = entry_end + 1
-    if any(len(entries) != 1 for entries in occurrences.values()):
-        return None
-    existing_keys = container_environment_keys(source)
-    if any(
-        new in existing_keys and new not in renames
-        for new in renames.values()
-    ):
-        return None
-    for old, new in renames.items():
-        index, _ = occurrences[old][0]
-        indent = re.match(r"^(\s*)", lines[index]).group(1)
-        lines[index] = f"{indent}{new}: {{\n"
-    for start, end in sorted(
-        (entries[0] for entries in (occurrences[key] for key in removals)),
-        reverse=True,
-    ):
-        del lines[start:end]
-    return "".join(lines)
-
-
 def source_runtime_encoder(
     evidence: dict[str, Any],
     *,
@@ -3059,6 +2918,8 @@ def reconcile_runtime_uris(
         for item in requirements.get("dependencies", [])
         if isinstance(item, dict)
     ]
+    if len(dependencies) != 1:
+        return []
 
     changes: list[dict[str, Any]] = []
     for dependency in dependencies:
@@ -3078,14 +2939,6 @@ def reconcile_runtime_uris(
             continue
         source_dependency = selected_dependency_fact(evidence, client_kind)
         if source_dependency is None:
-            continue
-        if (
-            sum(
-                resource_types.get(item.get("resourceSymbol")) == qualified_type
-                for item in dependencies
-            )
-            != 1
-        ):
             continue
         components = runtime_uri.get("components")
         template = runtime_uri.get("format")
@@ -3117,12 +2970,7 @@ def reconcile_runtime_uris(
             for item in dependency.get("settings", [])
             if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
-        excerpt, excerpt_citations = cited_source_excerpt(
-            source_dependency,
-            source_root=source_root,
-            source_path=source_path,
-        )
-        source_text = json.dumps(source_dependency, sort_keys=True) + "\n" + excerpt
+        source_text = json.dumps(source_dependency, sort_keys=True)
         source_keys = {
             key
             for key in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", source_text)
@@ -3167,24 +3015,9 @@ def reconcile_runtime_uris(
         arguments: list[str] = []
         secret_key = None
         component_keys: dict[str, str] = {}
-        delivery_keys: dict[str, str] = {}
         binding = protocol.get("binding") or {}
         for component in components:
             if component == "port":
-                setting = settings.get(component)
-                delivery = (
-                    setting.get("delivery")
-                    if isinstance(setting, dict)
-                    else None
-                )
-                key = (
-                    delivery.get("key")
-                    if isinstance(delivery, dict)
-                    and delivery.get("kind") in {"env", "literal"}
-                    else None
-                )
-                if isinstance(key, str) and key in environment_keys:
-                    delivery_keys[component] = key
                 port = binding.get("portLiteral", binding.get("port"))
                 if port is None:
                     arguments = []
@@ -3197,7 +3030,6 @@ def reconcile_runtime_uris(
             if not isinstance(key, str) or key not in environment_keys:
                 arguments = []
                 break
-            delivery_keys[component] = key
             if component == "password":
                 if delivery.get("kind") != "secretKeyRef" or key not in secret_keys:
                     arguments = []
@@ -3207,67 +3039,8 @@ def reconcile_runtime_uris(
             arguments.append(f'"${key}"')
         if len(arguments) != len(components) or secret_key is None:
             continue
-        if len(set(delivery_keys.values())) != len(delivery_keys):
-            continue
 
-        invalid_keys = {
-            component: key
-            for component, key in delivery_keys.items()
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
-        }
-        renames = {
-            key: (
-                f"RADIUS_{upper_snake(str(symbol))}_"
-                f"{upper_snake(component)}"
-            )
-            for component, key in invalid_keys.items()
-        }
-        port_setting = settings.get("port")
-        port_delivery = (
-            port_setting.get("delivery")
-            if isinstance(port_setting, dict)
-            else None
-        )
-        port_key = (
-            port_delivery.get("key")
-            if isinstance(port_delivery, dict)
-            and port_delivery.get("kind") in {"env", "literal"}
-            else None
-        )
-        removals = (
-            {port_key}
-            if isinstance(port_key, str)
-            and port_key in renames
-            and port_key not in {
-                key
-                for component, key in delivery_keys.items()
-                if component != "port"
-            }
-            else set()
-        )
-        renames = {
-            old: new for old, new in renames.items() if old not in removals
-        }
-        rewritten_source = rewrite_environment_entries(
-            source,
-            renames=renames,
-            removals=removals,
-        )
-        if rewritten_source is None:
-            continue
-        rewritten_keys = {
-            component: renames.get(key, key)
-            for component, key in delivery_keys.items()
-        }
-        for index, component in enumerate(components):
-            if component == "port":
-                continue
-            key = rewritten_keys[component]
-            arguments[index] = f'"${key}"'
-            component_keys[component] = key
-        secret_key = rewritten_keys["password"]
-
-        existing = candidate_runtime_command(rewritten_source, secret_key)
+        existing = candidate_runtime_command(source, secret_key)
         expands_secret = bool(
             existing
             and re.search(
@@ -3348,7 +3121,7 @@ def reconcile_runtime_uris(
         else:
             continue
         rewritten = insert_runtime_command(
-            rewritten_source,
+            source,
             composite_key=composite_key,
             secret_key=secret_key,
             command=command,
@@ -3356,27 +3129,6 @@ def reconcile_runtime_uris(
         if rewritten is None:
             continue
         source = rewritten
-        for component, key in rewritten_keys.items():
-            if component == "port":
-                continue
-            setting = settings.get(component)
-            delivery = setting.get("delivery") if isinstance(setting, dict) else None
-            if isinstance(delivery, dict):
-                delivery["key"] = key
-        if isinstance(port_setting, dict):
-            port_setting["delivery"] = {
-                "kind": "runtimeConfig",
-                "key": composite_key,
-                "value": binding.get("portLiteral", binding.get("port")),
-            }
-        secret_environment = requirements.get("secretEnvironment", [])
-        if isinstance(secret_environment, list):
-            for item in secret_environment:
-                if (
-                    isinstance(item, dict)
-                    and item.get("key") in renames
-                ):
-                    item["key"] = renames[item["key"]]
         for requirement in protocol.get("requiredClientSettings", []):
             name, separator, value = str(requirement).partition("=")
             if not separator or name in components:
@@ -3397,9 +3149,6 @@ def reconcile_runtime_uris(
                 "encoder": encoder_binary,
                 "encoderSource": dockerfile,
                 "componentKeys": component_keys,
-                "sourceCitations": excerpt_citations,
-                "renamedEnvironment": renames,
-                "removedEnvironment": sorted(removals),
             }
         )
     if changes:
