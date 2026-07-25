@@ -1463,9 +1463,6 @@ Expected/golden application definitions are unavailable.
             effort="low",
         )
         status["evidence"] = public_invocation(evidence_invocation)
-        if evidence_invocation["processExit"] != 0:
-            status["reason"] = "evidence reviewer failed"
-            return 1
         (run_dir / "reviewer-evidence.txt").write_text(
             evidence_invocation["finalText"] + "\n"
         )
@@ -1477,6 +1474,8 @@ Expected/golden application definitions are unavailable.
         except ValueError as exc:
             evidence = {}
             evidence_errors = [str(exc)]
+        if evidence_invocation["processExit"] != 0 and not evidence_errors:
+            status["evidenceRecoveredFromExit"] = evidence_invocation["processExit"]
         evidence_blocked = evidence.get("status") in {
             "blocked",
             "needs_more_info",
@@ -1521,6 +1520,10 @@ Expected/golden application definitions are unavailable.
                 evidence_errors = validate_evidence(evidence)
             except ValueError as exc:
                 evidence_errors = [str(exc)]
+            if evidence_retry["processExit"] != 0 and not evidence_errors:
+                status["evidenceRetryRecoveredFromExit"] = evidence_retry[
+                    "processExit"
+                ]
             if evidence_errors:
                 status["evidenceResult"] = {
                     "status": evidence.get("status"),
@@ -1592,10 +1595,13 @@ Expected/golden application definitions are unavailable.
                 effort="low",
             )
             status["authorRetry"] = public_invocation(author_invocation)
-        if author_invocation["processExit"] != 0:
+        handoff_errors = validate_handoff(candidate)
+        if author_invocation["processExit"] != 0 and handoff_errors:
+            status["authorHandoffErrors"] = handoff_errors[:8]
             status["reason"] = "author failed"
             return 1
-        handoff_errors = validate_handoff(candidate)
+        if author_invocation["processExit"] != 0:
+            status["authorRecoveredFromExit"] = author_invocation["processExit"]
         shutil.copytree(candidate, run_dir / "candidate-initial")
         reconciliation = (
             {
