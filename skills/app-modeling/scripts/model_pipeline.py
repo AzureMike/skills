@@ -655,6 +655,33 @@ def scalar(text: str) -> Any:
         return text
 
 
+def default_environment_name(
+    *,
+    contract: dict[str, Any],
+    qualified_type: str,
+    slot: str,
+    connection: str,
+) -> str | None:
+    """The environment name Radius itself injects for a connection setting.
+
+    A declared connection publishes the source resource's plain properties into
+    the container under a name the platform derives from the connection and the
+    property. Binding one of those names explicitly would set the value the
+    platform already set, so the contract's pattern is what tells us to leave it
+    alone. Secrets are not published this way and always need an explicit
+    binding.
+    """
+
+    pattern = (contract.get("policies") or {}).get("connectionDefaultEnvironment")
+    profile = contract["protocolProfiles"].get(qualified_type, {})
+    target = (profile.get("binding") or {}).get(f"{slot}Property")
+    if not pattern or not target:
+        return None
+    return pattern.format(
+        CONNECTION=identifier(connection).upper(), PROPERTY=target.upper()
+    )
+
+
 def setting_value(
     *,
     dependency: dict[str, Any],
@@ -1133,6 +1160,22 @@ def resolve(
                     )
                     continue
                 key = delivery["name"]
+                if key == default_environment_name(
+                    contract=contract,
+                    qualified_type=qualified_type,
+                    slot=slot,
+                    connection=dependency_id,
+                ):
+                    # The connection already publishes this name with this
+                    # value. Setting it again adds a line that changes nothing.
+                    ledger.append(
+                        {
+                            "name": slot,
+                            "evidence": setting["citation"],
+                            "delivery": {"kind": "connectionDefault", "key": key},
+                        }
+                    )
+                    continue
                 value_kind, value, managed_key = setting_value(
                     dependency=dependency,
                     slot=slot,
@@ -1206,7 +1249,6 @@ def resolve(
         connections = {
             identifier(dependency_id): {
                 "source": Expression(f"{plan['symbol']}.id"),
-                "disableDefaultEnvVars": True,
             }
             for dependency_id, plan in dependency_plans.items()
             if workload["id"] in plan["source"]["workloadIds"]

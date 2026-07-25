@@ -81,13 +81,6 @@ def normalize_resources(template):
     return []
 
 
-def referenced_symbol(value):
-    if not isinstance(value, str):
-        return None
-    match = re.search(r"reference\('([^']+)'\)", value)
-    return match.group(1) if match else None
-
-
 def validate_ref(errors, path, source):
     if not isinstance(source, str) or "?ref=" not in source:
         error(errors, "IMMUTABLE_SOURCE_REF", path, "Git build source must include ?ref=.")
@@ -272,9 +265,7 @@ def validate_template(
         if resource_type != "Radius.Compute/containers@2025-08-01-preview":
             continue
 
-        env_values = []
         for container in properties.get("containers", {}).values():
-            env_values.extend(container.get("env", {}).values())
             for name, body in container.get("env", {}).items():
                 value = body.get("value")
                 if value is None or not SECRET_ENV.search(name):
@@ -312,25 +303,6 @@ def validate_template(
                             "A secure parameter must not be expanded into process "
                             "arguments, where it is visible in the process table.",
                         )
-
-        for name, connection in properties.get("connections", {}).items():
-            source_symbol = referenced_symbol(connection.get("source"))
-            has_explicit_binding = source_symbol and any(
-                f"reference('{source_symbol}')" in json.dumps(value)
-                for value in env_values
-            )
-            if (
-                has_explicit_binding
-                and connection.get("disableDefaultEnvVars") is not True
-            ):
-                error(
-                    errors,
-                    "CONNECTION_DEFAULT_ENV",
-                    f"{path}.properties.connections.{name}.disableDefaultEnvVars",
-                    "An explicit native binding to the connection source requires "
-                    "disableDefaultEnvVars=true.",
-                )
-
 
 def main():
     parser = argparse.ArgumentParser()

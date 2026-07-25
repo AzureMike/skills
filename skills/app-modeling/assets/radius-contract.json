@@ -99,6 +99,7 @@
   "policies": {
     "allBicepDiagnosticsFailValidation": true,
     "connectionsDoNotReplaceNativeClientConfig": true,
+    "connectionDefaultEnvironment": "CONNECTION_{CONNECTION}_{PROPERTY}",
     "defaultExposure": "none",
     "secretEnvironmentUsesSecretKeyRef": true,
     "developerSuppliedSecretEnvironmentUsesAuthoredSecret": true,
