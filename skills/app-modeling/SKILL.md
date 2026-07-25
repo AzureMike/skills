@@ -64,8 +64,8 @@ artifact directory.
   cannot build without an externally generated artifact.
 - Use only bundled verified Radius types and properties.
 - Bind every workload dependency with both its native runtime configuration
-  and a Radius connection; disable generic projection when source does not
-  consume it.
+  and a Radius connection. Leave a setting the connection already publishes
+  under the platform's own name to the connection.
 - Pass developer-supplied credentials through `@secure()` parameters. Bind a
   credential the Recipe generates directly from its managed secret name and
   key, never by copying the value into the definition. Both forms are rendered
