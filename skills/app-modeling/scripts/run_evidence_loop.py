@@ -62,7 +62,11 @@ DEPLOYMENT_MANIFESTS = (
     "Chart.yaml", "requirements.yaml", "values*.yml", "values*.yaml",
 )
 
-MANIFEST_DIRECTORIES = (
+# A manifest that deploys the application sits at the repository root or in a
+# directory dedicated to deployment. One nested inside a source tree configures
+# whatever subsystem lives there: a plugin's integration fixture, a driver's
+# test database, a documentation example.
+DEPLOYMENT_DIRECTORIES = (
     "deploy", "deployment", "deployments", "k8s", "kubernetes",
     "manifests", "chart", "charts", "helm",
 )
@@ -71,6 +75,16 @@ IGNORED_DIRECTORIES = {
     ".git", ".github", "node_modules", "vendor", "testdata", "test", "tests",
     "site-packages", "dist", "build", "examples", "templates",
 }
+
+
+def deploys_application(relative: Path) -> bool:
+    """Whether this path is where a repository puts its own deployment."""
+
+    parts = relative.parts
+    if len(parts) == 1:
+        return True
+    head = parts[0].lower()
+    return head in DEPLOYMENT_DIRECTORIES or "chart" in head
 
 
 def deployment_manifests(root: Path, limit: int = 25) -> list[str]:
@@ -82,11 +96,9 @@ def deployment_manifests(root: Path, limit: int = 25) -> list[str]:
     one question a bare image cannot answer, and an analyst that never opens
     the chart answers it wrongly while citing the code correctly.
 
-    Ordering is shallowest first, because a manifest beside the Dockerfile
-    deploys the application while a deep one usually fixtures a single
-    subsystem. Helm `templates` are skipped: they are rendered from the values
-    and chart files, which is where a declared dependency is written. CI
-    workflows are excluded because they configure test runs, not deployments.
+    Helm `templates` are skipped: they are rendered from the values and chart
+    files, which is where a declared dependency is written. CI workflows are
+    excluded because they configure test runs, not deployments.
     """
 
     found: set[str] = set()
@@ -95,16 +107,16 @@ def deployment_manifests(root: Path, limit: int = 25) -> list[str]:
             continue
         relative = path.relative_to(root)
         parts = set(relative.parts[:-1])
-        if parts & IGNORED_DIRECTORIES:
+        if parts & IGNORED_DIRECTORIES or not deploys_application(relative):
             continue
         matches_name = any(
             fnmatch.fnmatch(path.name, pattern)
             for pattern in DEPLOYMENT_MANIFESTS
         )
-        in_manifest_directory = bool(
-            parts & set(MANIFEST_DIRECTORIES)
+        in_deployment_directory = bool(
+            parts & set(DEPLOYMENT_DIRECTORIES)
         ) and path.suffix in {".yml", ".yaml"}
-        if matches_name or in_manifest_directory:
+        if matches_name or in_deployment_directory:
             found.add(relative.as_posix())
     return sorted(found, key=lambda item: (item.count("/"), item))[:limit]
 
