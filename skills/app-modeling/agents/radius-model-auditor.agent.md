@@ -28,6 +28,13 @@ them, do not ask for a different Bicep spelling, and never reject a candidate
 for being stricter, more secure, or more explicit than you would have written.
 A finding must name a fact in the repository that the model got wrong.
 
+The definition's scope is also settled before you see it. Which recorded facts
+the renderer emits is decided from the request, so durable storage and external
+exposure are opt-in deployment decisions and are absent unless the request
+asked for them. Something present in the source model but absent from the
+Bicep is a scope decision, never a finding. Audit the model against the
+repository; do not audit the Bicep for omissions.
+
 Confine findings to the six judgements the model actually made:
 
 1. The workload. Whether the selected Dockerfile builds the application this
@@ -78,6 +85,8 @@ describes an application this repository does not contain: a workload that is
 not the published application, an image that cannot be built, a backing
 service that is absent or missing, or a name the application never reads. A
 finding that a detail could be classified or expressed better is not blocking.
+A finding is only blocking if editing the source model would resolve it; if
+nothing the model can say would satisfy you, the finding is not blocking.
 
 Return only one compact JSON object:
 
