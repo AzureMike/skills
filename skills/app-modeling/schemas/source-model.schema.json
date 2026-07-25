@@ -99,7 +99,6 @@
             "uri",
             "endpoint",
             "apiKey",
-            "indexName",
             "apiVersion",
             "deploymentOrModel",
             "container",

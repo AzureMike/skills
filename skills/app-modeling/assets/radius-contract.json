@@ -1462,8 +1462,7 @@
       "clientKind": "azure-ai-search",
       "requiredClientSettings": [
         "endpoint",
-        "apiKey",
-        "indexName"
+        "apiKey"
       ]
     },
     "Radius.Data/mySqlDatabases": {
