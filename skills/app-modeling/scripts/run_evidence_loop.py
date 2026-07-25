@@ -1501,6 +1501,99 @@ def reconcile_stale_secret_composite_env(
     ]
 
 
+def reconcile_exported_runtime_settings(
+    candidate: Path,
+    authoring_contract: dict[str, Any],
+) -> list[dict[str, Any]]:
+    requirements_path = candidate / "requirements.json"
+    source_path = candidate / "app.bicep"
+    requirements = json.loads(requirements_path.read_text())
+    source = source_path.read_text()
+    resource_types = {
+        symbol: resource_type.split("@", 1)[0]
+        for symbol, resource_type in re.findall(
+            r"\bresource\s+([A-Za-z_][A-Za-z0-9_]*)\s+'([^']+)'",
+            source,
+        )
+    }
+    changes: list[dict[str, Any]] = []
+    for dependency in requirements.get("dependencies", []):
+        if not isinstance(dependency, dict):
+            continue
+        symbol = dependency.get("resourceSymbol")
+        qualified_type = resource_types.get(symbol)
+        protocol = (
+            authoring_contract.get("bundles", {})
+            .get(qualified_type, {})
+            .get("protocol")
+            or {}
+        )
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for setting in dependency.get("settings", []):
+            if not isinstance(setting, dict):
+                continue
+            delivery = setting.get("delivery")
+            if (
+                isinstance(delivery, dict)
+                and delivery.get("kind") == "env"
+                and isinstance(delivery.get("key"), str)
+            ):
+                groups.setdefault(delivery["key"], []).append(setting)
+        for key, settings in groups.items():
+            if len(settings) < 2:
+                continue
+            export = re.search(
+                rf"(?m)^.*\bexport\s+{re.escape(key)}\s*=.*$",
+                source,
+            )
+            if not export:
+                continue
+            line = export.group(0)
+            port_setting = next(
+                (
+                    setting
+                    for setting in settings
+                    if str(setting.get("name", "")).partition("=")[0] == "port"
+                ),
+                None,
+            )
+            binding = protocol.get("binding") or {}
+            port = binding.get("portLiteral", binding.get("port"))
+            port_inserted = False
+            if port_setting is not None and port is not None and str(port) not in line:
+                rewritten, count = re.subn(
+                    r"(@[^/:\\'\"\s?;]+)(/)",
+                    rf"\1:{port}\2",
+                    line,
+                    count=1,
+                )
+                if count != 1:
+                    continue
+                source = source[: export.start()] + rewritten + source[export.end() :]
+                line = rewritten
+                port_inserted = True
+            if port_setting is not None and port is not None and str(port) not in line:
+                continue
+            for setting in settings:
+                delivery = setting["delivery"]
+                delivery["kind"] = "runtimeConfig"
+                changes.append(
+                    {
+                        "resourceSymbol": symbol,
+                        "setting": setting.get("name"),
+                        "key": key,
+                        "portInserted": (
+                            port_inserted
+                            and setting is port_setting
+                        ),
+                    }
+                )
+    if changes:
+        source_path.write_text(source)
+        write_json(requirements_path, requirements)
+    return changes
+
+
 def reconcile_runtime_composites(
     candidate: Path,
     authoring_contract: dict[str, Any],
@@ -1973,6 +2066,7 @@ Expected/golden application definitions are unavailable.
                 "sourceDefaultChanges": [],
                 "connectionShapeChanges": [],
                 "runtimeCompositeChanges": [],
+                "exportedRuntimeChanges": [],
                 "secretCompositeEnvChanges": [],
                 "optionalVersionChanges": [],
                 "publishedImageChanges": [],
@@ -2004,6 +2098,12 @@ Expected/golden application definitions are unavailable.
                     candidate,
                     authoring_contract,
                     evidence,
+                )
+            )
+            reconciliation["exportedRuntimeChanges"] = (
+                reconcile_exported_runtime_settings(
+                    candidate,
+                    authoring_contract,
                 )
             )
             reconciliation["secretCompositeEnvChanges"] = (
@@ -2110,6 +2210,12 @@ candidate files.
                     candidate,
                     authoring_contract,
                     evidence,
+                )
+            )
+            reconciliation["exportedRuntimeChanges"] = (
+                reconcile_exported_runtime_settings(
+                    candidate,
+                    authoring_contract,
                 )
             )
             reconciliation["secretCompositeEnvChanges"] = (
