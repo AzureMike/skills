@@ -109,7 +109,9 @@ def source_selected_types(evidence: dict[str, Any]) -> set[str]:
     dependencies = facts.get("dependencies")
     if isinstance(dependencies, dict):
         dependencies = [dependencies]
-    if not isinstance(dependencies, list):
+    elif isinstance(dependencies, list):
+        dependencies = list(dependencies)
+    else:
         dependencies = []
     singular = facts.get("dependency")
     if isinstance(singular, dict):
@@ -144,7 +146,9 @@ def source_selected_types(evidence: dict[str, Any]) -> set[str]:
     workloads = facts.get("workloads")
     if isinstance(workloads, dict):
         workloads = [workloads]
-    if not isinstance(workloads, list):
+    elif isinstance(workloads, list):
+        workloads = list(workloads)
+    else:
         workloads = []
     workload = facts.get("workload")
     if isinstance(workload, dict):
@@ -388,6 +392,31 @@ def normalize_review(value: dict[str, Any]) -> dict[str, Any]:
         "summary": str(value.get("summary", f"Independent review returned {status}.")),
         "findings": findings,
     }
+
+
+def completed_review(invocation: dict[str, Any]) -> dict[str, Any]:
+    if invocation.get("processExit") != 0:
+        return {
+            "verdict": "needs_more_info",
+            "summary": (
+                f"auditor process exited {invocation.get('processExit')} "
+                "without clean completion"
+            ),
+            "findings": [],
+        }
+    try:
+        review = normalize_review(parse_json_object(invocation["finalText"]))
+        errors = validate_review(review)
+    except (KeyError, ValueError) as exc:
+        errors = [str(exc)]
+        review = {}
+    if errors:
+        return {
+            "verdict": "needs_more_info",
+            "summary": "; ".join(errors),
+            "findings": [],
+        }
+    return review
 
 
 def normalize_evidence(value: dict[str, Any]) -> dict[str, Any]:
@@ -634,6 +663,17 @@ def reconcile_requirements(
             name = setting.get("name")
             if not isinstance(name, str):
                 continue
+            bare_name = name.partition("=")[0]
+            if bare_name in required_names and bare_name != name:
+                setting["name"] = bare_name
+                changes.append(
+                    {
+                        "resourceSymbol": resource_symbol,
+                        "from": name,
+                        "to": bare_name,
+                    }
+                )
+                name = bare_name
             delivery_kind = (setting.get("delivery") or {}).get("kind")
             delivery = setting.get("delivery") or {}
             if name in required_names:
@@ -900,6 +940,71 @@ def reconcile_bicep_expressions(candidate: Path) -> list[dict[str, str]]:
     if changes:
         source_path.write_text(rewritten)
     return changes
+
+
+def reconcile_published_images(
+    candidate: Path,
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    facts = evidence.get("facts") if isinstance(evidence, dict) else None
+    if not isinstance(facts, dict):
+        return []
+    images: set[str] = set()
+    build = facts.get("build")
+    if isinstance(build, dict) and build.get("mode") == "publishedRelease":
+        image = build.get("image")
+        if isinstance(image, str) and image:
+            images.add(image)
+    workloads = facts.get("workloads")
+    if isinstance(workloads, list):
+        for workload in workloads:
+            if not isinstance(workload, dict):
+                continue
+            workload_build = workload.get("build")
+            if (
+                isinstance(workload_build, dict)
+                and workload_build.get("mode") == "publishedRelease"
+            ):
+                image = workload_build.get("image", workload.get("image"))
+                if isinstance(image, str) and image:
+                    images.add(image)
+    if len(images) != 1:
+        return []
+
+    source_path = candidate / "app.bicep"
+    source = source_path.read_text()
+    declarations = list(
+        re.finditer(
+            r"(?m)^resource\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
+            r"'Radius\.Compute/containerImages@[^']+'\s*=\s*\{",
+            source,
+        )
+    )
+    if len(declarations) != 1:
+        return []
+    declaration = declarations[0]
+    symbol = declaration.group(1)
+    reference = f"{symbol}.properties.imageReference"
+    if reference not in source:
+        return []
+    depth = 0
+    end = None
+    for index in range(declaration.end() - 1, len(source)):
+        depth += (source[index] == "{") - (source[index] == "}")
+        if depth == 0:
+            end = index + 1
+            break
+    if end is None:
+        return []
+    while end < len(source) and source[end] in "\r\n":
+        end += 1
+    image = next(iter(images))
+    rewritten = source[: declaration.start()] + source[end:]
+    rewritten = rewritten.replace(reference, f"'{image}'")
+    if reference in rewritten:
+        return []
+    source_path.write_text(rewritten)
+    return [{"resourceSymbol": symbol, "image": image}]
 
 
 def upper_snake(value: str) -> str:
@@ -1469,6 +1574,7 @@ Expected/golden application definitions are unavailable.
                 "bicepConfigChanges": [],
                 "runtimeCompositeChanges": [],
                 "optionalVersionChanges": [],
+                "publishedImageChanges": [],
                 "bicepExpressionChanges": [],
             }
             if handoff_errors
@@ -1477,6 +1583,9 @@ Expected/golden application definitions are unavailable.
         if not handoff_errors:
             reconciliation["optionalVersionChanges"] = (
                 reconcile_optional_versions(candidate, evidence)
+            )
+            reconciliation["publishedImageChanges"] = (
+                reconcile_published_images(candidate, evidence)
             )
             reconciliation["bicepExpressionChanges"] = (
                 reconcile_bicep_expressions(candidate)
@@ -1520,18 +1629,7 @@ Audit the candidate against {run_dir / 'reviewer-evidence.json'},
             effort="low",
         )
         status["review"] = public_invocation(review_invocation)
-        try:
-            review = normalize_review(parse_json_object(review_invocation["finalText"]))
-            review_errors = validate_review(review)
-        except ValueError as exc:
-            review = {"verdict": "needs_more_info", "summary": str(exc), "findings": []}
-            review_errors = [str(exc)]
-        if review_errors:
-            review = {
-                "verdict": "needs_more_info",
-                "summary": "; ".join(review_errors),
-                "findings": [],
-            }
+        review = completed_review(review_invocation)
         write_json(run_dir / "review-1.json", review)
 
         if validation.get("valid") and review.get("verdict") == "needs_more_info":
@@ -1550,21 +1648,8 @@ Return a compact audit JSON for {candidate / 'app.bicep'} using only
                 timeout=min(args.final_review_timeout, remaining(deadline)),
                 effort="low",
             )
-            try:
-                review = normalize_review(
-                    parse_json_object(retry_invocation["finalText"])
-                )
-                review_errors = validate_review(review)
-            except ValueError as exc:
-                review = {
-                    "verdict": "needs_more_info",
-                    "summary": str(exc),
-                    "findings": [],
-                }
-                review_errors = [str(exc)]
-            if review_errors:
-                review["verdict"] = "needs_more_info"
-                review["summary"] = "; ".join(review_errors)
+            status["reviewRetry"] = public_invocation(retry_invocation)
+            review = completed_review(retry_invocation)
             write_json(run_dir / "review-retry.json", review)
 
         if not validation.get("valid") or review.get("verdict") == "rejected":
@@ -1594,6 +1679,9 @@ or rescan the repository.
             reconciliation = reconcile_requirements(candidate, authoring_contract)
             reconciliation["optionalVersionChanges"] = (
                 reconcile_optional_versions(candidate, evidence)
+            )
+            reconciliation["publishedImageChanges"] = (
+                reconcile_published_images(candidate, evidence)
             )
             reconciliation["bicepExpressionChanges"] = (
                 reconcile_bicep_expressions(candidate)
@@ -1633,19 +1721,7 @@ and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
                 effort="low",
             )
             status["finalReview"] = public_invocation(final_invocation)
-            try:
-                review = normalize_review(parse_json_object(final_invocation["finalText"]))
-                review_errors = validate_review(review)
-            except ValueError as exc:
-                review = {
-                    "verdict": "needs_more_info",
-                    "summary": str(exc),
-                    "findings": [],
-                }
-                review_errors = [str(exc)]
-            if review_errors:
-                review["verdict"] = "needs_more_info"
-                review["summary"] = "; ".join(review_errors)
+            review = completed_review(final_invocation)
             write_json(run_dir / "review-2.json", review)
 
         if remaining(deadline) <= 0:
