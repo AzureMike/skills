@@ -83,7 +83,6 @@
             "connectionUri",
             "tls",
             "certificateValidation",
-            "authMode",
             "sslmode",
             "encrypt",
             "trustServerCertificate",
