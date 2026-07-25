@@ -27,6 +27,10 @@ tools, live reload, tests, migrations, demo helpers, optional adapters, and
 extra clusters unless startup or the request requires them. Do not infer a
 production dependency solely from a development example; verify that the
 selected production client consumes it.
+When a complete repository manifest selects a first-class external backing
+service that the production workload supports, preserve that backing path
+instead of silently switching to an embedded fallback. Exclude unrelated
+development-only workloads individually.
 
 For every workload:
 
@@ -52,6 +56,8 @@ environment names. Use these semantic slots where applicable:
   `connectionUri`, `tls`, `certificateValidation`, `authMode`
 - Kafka: `bootstrapServers`, `security.protocol`, `sasl.mechanism`,
   `sasl.jaas.config`
+- RabbitMQ: `protocol`, `tls`, `sasl.mechanism`, `sasl.user`,
+  `sasl.password`, `target_address`, `source_address`
 - Redis: `uri`
 - AI/search: `endpoint`, `apiKey`, `indexName`, `apiVersion`,
   `deploymentOrModel`

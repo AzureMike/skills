@@ -52,8 +52,37 @@
       "additionalProperties": false,
       "properties": {
         "slot": {
-          "type": "string",
-          "minLength": 1
+          "enum": [
+            "host",
+            "port",
+            "database",
+            "username",
+            "password",
+            "connectionUri",
+            "tls",
+            "certificateValidation",
+            "authMode",
+            "encrypt",
+            "trustServerCertificate",
+            "bootstrapServers",
+            "security.protocol",
+            "sasl.mechanism",
+            "sasl.jaas.config",
+            "sasl.user",
+            "sasl.password",
+            "protocol",
+            "target_address",
+            "source_address",
+            "uri",
+            "endpoint",
+            "apiKey",
+            "indexName",
+            "apiVersion",
+            "deploymentOrModel",
+            "container",
+            "accountName",
+            "accountKeyOrConnectionString"
+          ]
         },
         "delivery": {
           "oneOf": [

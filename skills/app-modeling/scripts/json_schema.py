@@ -40,7 +40,9 @@ def validate(instance: Any, schema: dict[str, Any]) -> list[str]:
         if "const" in rule and value != rule["const"]:
             errors.append(f"{path}: must equal {rule['const']!r}")
         if "enum" in rule and value not in rule["enum"]:
-            errors.append(f"{path}: must be one of {rule['enum']!r}")
+            errors.append(
+                f"{path}: {value!r} must be one of {rule['enum']!r}"
+            )
 
         expected = rule.get("type")
         expected_types = expected if isinstance(expected, list) else [expected]

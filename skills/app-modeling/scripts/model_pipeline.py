@@ -876,6 +876,7 @@ def resolve(
                     "properties": {
                         "environment": Expression("environment"),
                         "application": Expression("app.id"),
+                        "sizeInGib": 1,
                     },
                 },
             },
