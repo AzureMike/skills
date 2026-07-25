@@ -30,6 +30,52 @@ REQUIRED_CANDIDATE = (
 )
 
 
+def descendant_processes(root_pid: int) -> list[int]:
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,ppid="],
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    children: dict[int, list[int]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        try:
+            pid, parent = map(int, fields)
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(pid)
+    descendants: list[int] = []
+    pending = list(children.get(root_pid, []))
+    while pending:
+        pid = pending.pop()
+        descendants.append(pid)
+        pending.extend(children.get(pid, []))
+    return descendants
+
+
+def terminate_processes(
+    process: subprocess.Popen[str],
+    descendants: list[int],
+    selected_signal: signal.Signals,
+) -> None:
+    try:
+        os.killpg(process.pid, selected_signal)
+    except OSError:
+        pass
+    for pid in reversed(descendants):
+        try:
+            os.kill(pid, selected_signal)
+        except OSError:
+            pass
+
+
 def run_bounded(
     argv: list[str],
     *,
@@ -48,17 +94,12 @@ def run_bounded(
         stdout, stderr = process.communicate(timeout=max(1, timeout))
         return process.returncode, stdout, stderr, False
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        descendants = descendant_processes(process.pid)
+        terminate_processes(process, descendants, signal.SIGTERM)
         try:
             stdout, stderr = process.communicate(timeout=2)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            terminate_processes(process, descendants, signal.SIGKILL)
             stdout, stderr = process.communicate()
         return 124, stdout, stderr, True
 
