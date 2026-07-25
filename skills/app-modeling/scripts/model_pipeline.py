@@ -191,6 +191,36 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
     if model["status"] == "blocked" and not model["blockers"]:
         errors.append("$.blockers: blocked source model must explain the blocker")
 
+    kinds = dependency_types(contract)
+    for index, dependency in enumerate(model["dependencies"]):
+        qualified = kinds.get(dependency["kind"])
+        if not qualified:
+            continue
+        constants = contract_constants(
+            contract["protocolProfiles"].get(qualified, {})
+        )
+        for position, setting in enumerate(dependency.get("settings") or []):
+            if setting["delivery"]["kind"] != "sourceDefault":
+                continue
+            # An application default can stand in for a setting only when it
+            # already equals what the provider requires. The contract pins
+            # these values because the provisioned service will not accept
+            # anything else, so a default that disagrees has to be delivered
+            # explicitly rather than silently left off the container.
+            pinned = constants.get(setting["slot"])
+            if pinned is not None and not same_value(
+                setting.get("sourceDefault"), pinned
+            ):
+                errors.append(
+                    f"$.dependencies[{index}].settings[{position}]: "
+                    f"{setting['slot']!r} defaults to "
+                    f"{json.dumps(setting.get('sourceDefault'))} in the "
+                    f"application, but a Radius {dependency['kind']} requires "
+                    f"{pinned!r}. Record the environment variable, file or "
+                    "argument the application reads this setting from so the "
+                    "default can be overridden."
+                )
+
     workload_ids = [item["id"] for item in model["workloads"]]
     dependency_ids = [item["id"] for item in model["dependencies"]]
     if len(workload_ids) != len(set(workload_ids)):
@@ -893,7 +923,6 @@ def resolve(
             }
             skipped_slots: set[str] = set()
             profile = contract["protocolProfiles"].get(qualified_type, {})
-            constants = contract_constants(profile)
             uri_spec = profile.get("runtimeUri")
             if uri_spec and uri_spec.get("setting") in settings_by_slot:
                 uri = settings_by_slot[uri_spec["setting"]]
@@ -1092,25 +1121,6 @@ def resolve(
                     continue
                 delivery = setting["delivery"]
                 if delivery["kind"] == "sourceDefault":
-                    # An application default can stand in for a setting only
-                    # when it already equals what the provider requires. The
-                    # contract pins these values because the provisioned
-                    # service will not accept anything else, so a default that
-                    # disagrees has to be overridden explicitly rather than
-                    # silently left off the container.
-                    pinned = constants.get(slot)
-                    if pinned is not None and not same_value(
-                        setting.get("sourceDefault"), pinned
-                    ):
-                        raise ValueError(
-                            f"$.dependencies[{dependency['id']}].settings: "
-                            f"slot {slot!r} "
-                            f"defaults to "
-                            f"{json.dumps(setting.get('sourceDefault'))} in the "
-                            f"application but {dependency['kind']!r} requires "
-                            f"{pinned!r}; record how the application reads this "
-                            "setting instead of relying on its default"
-                        )
                     ledger.append(
                         {
                             "name": slot,

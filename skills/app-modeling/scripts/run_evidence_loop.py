@@ -375,7 +375,10 @@ Each backing service kind needs these client settings recorded under
                     "Your source model did not validate against the supplied "
                     "schema. Correct only these validation failures, using "
                     "source inspection only where a missing fact requires it, "
-                    "and return the complete JSON object once:\n- "
+                    "and return the complete JSON object once. Change nothing "
+                    "the failures below do not name: every other entry already "
+                    "validated, so editing it can only introduce a new "
+                    "error.\n- "
                     + "\n- ".join(errors[:20])
                 ),
                 timeout=min(args.evidence_retry_timeout, remaining(deadline)),
