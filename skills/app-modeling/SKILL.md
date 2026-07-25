@@ -43,7 +43,7 @@ reconciles protocol, secret, composite, graph, and persistence requirements
 before authoring. The parent compiles and validates the exact candidate, an
 independent auditor reviews it against the source facts and contracts, and the
 writer receives at most one finding-directed repair. The default internal
-deadline is 360 seconds.
+deadline is 420 seconds.
 
 Treat the final JSON object as authoritative. On failure, report its reason and
 artifact directory. Do not retry, inspect internal artifacts, edit the

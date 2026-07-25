@@ -1645,7 +1645,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=".")
     parser.add_argument("--request", required=True)
-    parser.add_argument("--deadline-seconds", type=float, default=390)
+    parser.add_argument("--deadline-seconds", type=float, default=420)
     parser.add_argument("--evidence-timeout", type=float, default=100)
     parser.add_argument("--author-timeout", type=float, default=200)
     parser.add_argument("--review-timeout", type=float, default=100)
