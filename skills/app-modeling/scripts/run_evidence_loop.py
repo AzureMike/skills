@@ -2817,264 +2817,6 @@ def selected_dependency_fact(
     return matching[0] if len(matching) == 1 else None
 
 
-def cited_source_excerpt(
-    value: dict[str, Any],
-    *,
-    source_root: Path,
-    source_path: str,
-    max_lines: int = 240,
-) -> tuple[str, list[str]]:
-    citations: list[str] = []
-
-    def collect(item: Any, key: str = "") -> None:
-        if isinstance(item, dict):
-            for child_key, child in item.items():
-                collect(child, str(child_key))
-        elif isinstance(item, list):
-            for child in item:
-                collect(child, key)
-        elif isinstance(item, str) and key.lower().endswith(
-            ("citation", "citations")
-        ):
-            citations.append(item)
-
-    collect(value)
-    application_root = (
-        source_root if source_path in {"", "."} else source_root / source_path
-    )
-    resolved_root = source_root.resolve()
-    excerpts: list[str] = []
-    used: list[str] = []
-    remaining_lines = max_lines
-    seen: set[tuple[Path, int, int]] = set()
-    for citation in citations:
-        match = re.fullmatch(r"(.+?):([1-9][0-9]*)(?:-([1-9][0-9]*))?", citation)
-        if not match:
-            continue
-        start = int(match.group(2))
-        end = int(match.group(3) or start)
-        if end < start or end - start + 1 > 80:
-            continue
-        for unresolved in (
-            application_root / match.group(1),
-            source_root / match.group(1),
-        ):
-            resolved = unresolved.resolve()
-            try:
-                resolved.relative_to(resolved_root)
-            except ValueError:
-                continue
-            key = (resolved, start, end)
-            if key in seen or not resolved.is_file() or remaining_lines <= 0:
-                continue
-            seen.add(key)
-            selected: list[str] = []
-            try:
-                with resolved.open(errors="replace") as handle:
-                    for number, line in enumerate(handle, start=1):
-                        if number > end:
-                            break
-                        if number >= start:
-                            selected.append(line[:8192])
-            except OSError:
-                continue
-            if len(selected) != end - start + 1:
-                continue
-            if len(selected) > remaining_lines:
-                continue
-            excerpts.extend(selected)
-            remaining_lines -= len(selected)
-            used.append(citation)
-            break
-    return "".join(excerpts), used
-
-
-def rewrite_environment_entries(
-    source: str,
-    *,
-    anchor: str,
-    renames: dict[str, str],
-    removals: set[str],
-    additions: dict[str, str],
-) -> str | None:
-    if (
-        set(renames) & removals
-        or len(set(renames.values())) != len(renames)
-        or (set(renames.values()) | set(additions)) & removals
-    ):
-        return None
-    lines = source.splitlines(keepends=True)
-    blocks: list[tuple[int, int, str, dict[str, tuple[int, int]]]] = []
-    for env_index, line in enumerate(lines):
-        match = re.match(r"^(\s*)env\s*:\s*\{\s*$", line)
-        if not match:
-            continue
-        key_indent = match.group(1) + "  "
-        depth = 0
-        env_end = None
-        for index in range(env_index, len(lines)):
-            depth += lines[index].count("{") - lines[index].count("}")
-            if index > env_index and depth == 0:
-                env_end = index
-                break
-        if env_end is None:
-            continue
-        entries: dict[str, tuple[int, int]] = {}
-        index = env_index + 1
-        while index < env_end:
-            key_match = re.match(
-                rf"^{re.escape(key_indent)}(?:'([^']+)'|\"([^\"]+)\"|"
-                r"([A-Za-z_][A-Za-z0-9_]*))\s*:\s*\{\s*$",
-                lines[index],
-            )
-            if not key_match:
-                index += 1
-                continue
-            key = next(item for item in key_match.groups() if item)
-            entry_depth = 0
-            entry_end = index
-            while entry_end < env_end:
-                entry_depth += (
-                    lines[entry_end].count("{") - lines[entry_end].count("}")
-                )
-                if entry_end > index and entry_depth == 0:
-                    break
-                entry_end += 1
-            if key in entries:
-                return None
-            entries[key] = (index, entry_end + 1)
-            index = entry_end + 1
-        blocks.append((env_index, env_end, key_indent, entries))
-    matching = [block for block in blocks if anchor in block[3]]
-    if len(matching) != 1:
-        return None
-    _, env_end, key_indent, entries = matching[0]
-    if not (set(renames) | removals) <= set(entries):
-        return None
-    final_keys = (
-        (set(entries) - set(renames) - removals)
-        | set(renames.values())
-        | set(additions)
-    )
-    if len(final_keys) != len(entries) - len(removals) + len(additions):
-        return None
-    for old, new in renames.items():
-        index, _ = entries[old]
-        ending = "\r\n" if lines[index].endswith("\r\n") else "\n"
-        lines[index] = f"{key_indent}{new}: {{{ending}"
-    removed_lines = 0
-    for start, end in sorted((entries[key] for key in removals), reverse=True):
-        removed_lines += end - start
-        del lines[start:end]
-    insert_at = env_end - removed_lines
-    addition_lines: list[str] = []
-    for key, expression in additions.items():
-        addition_lines.extend(
-            [
-                f"{key_indent}{key}: {{\n",
-                f"{key_indent}  value: {expression}\n",
-                f"{key_indent}}}\n",
-            ]
-        )
-    lines[insert_at:insert_at] = addition_lines
-    return "".join(lines)
-
-
-def resource_input_expression(
-    source: str,
-    *,
-    resource_symbol: str,
-    property_name: str,
-) -> str | None:
-    declaration = re.search(
-        rf"(?m)^resource\s+{re.escape(resource_symbol)}\s+'[^']+'\s*=\s*\{{",
-        source,
-    )
-    if declaration is None:
-        return None
-    depth = 0
-    end = None
-    for index in range(declaration.end() - 1, len(source)):
-        depth += (source[index] == "{") - (source[index] == "}")
-        if depth == 0:
-            end = index + 1
-            break
-    if end is None:
-        return None
-    lines = source[declaration.start() : end].splitlines()
-    properties = next(
-        (
-            (index, match.group(1))
-            for index, line in enumerate(lines)
-            if (match := re.match(r"^(\s*)properties\s*:\s*\{\s*$", line))
-        ),
-        None,
-    )
-    if properties is None:
-        return None
-    properties_index, indent = properties
-    property_indent = indent + "  "
-    match = next(
-        (
-            re.match(
-                rf"^{re.escape(property_indent)}{re.escape(property_name)}"
-                r"\s*:\s*(.+?)\s*$",
-                line,
-            )
-            for line in lines[properties_index + 1 :]
-            if re.match(
-                rf"^{re.escape(property_indent)}{re.escape(property_name)}\s*:",
-                line,
-            )
-        ),
-        None,
-    )
-    if match is None:
-        return None
-    expression = match.group(1)
-    if not re.fullmatch(
-        r"(?:'(?:\\.|[^'])*'|"
-        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*|"
-        r"-?[0-9]+(?:\.[0-9]+)?|true|false)",
-        expression,
-    ):
-        return None
-    return expression
-
-
-def select_secret_environment_key(
-    source: str,
-    *,
-    expected: str,
-    resource_symbol: str,
-) -> str | None:
-    keys = secret_key_ref_environment_keys(source)
-    if expected in keys:
-        return expected
-    if len(keys) == 1:
-        return next(iter(keys))
-    expected_tokens = set(upper_snake(expected).split("_"))
-    symbol_tokens = set(upper_snake(resource_symbol).split("_"))
-    password_tokens = {"PASSWORD", "PASS", "PASSWD", "PWD"}
-    ranked = sorted(
-        (
-            (
-                2 * len(set(upper_snake(key).split("_")) & expected_tokens)
-                + 2
-                * bool(set(upper_snake(key).split("_")) & password_tokens)
-                + bool(set(upper_snake(key).split("_")) & symbol_tokens),
-                key,
-            )
-            for key in keys
-        ),
-        reverse=True,
-    )
-    if not ranked or ranked[0][0] == 0:
-        return None
-    best = [key for score, key in ranked if score == ranked[0][0]]
-    return best[0] if len(best) == 1 else None
-
-
 def source_runtime_encoder(
     evidence: dict[str, Any],
     *,
@@ -3166,6 +2908,7 @@ def reconcile_runtime_uris(
         return []
     encoder_binary, encoder_kind, dockerfile = runtime_encoder
     environment_keys = container_environment_keys(source)
+    secret_keys = secret_key_ref_environment_keys(source)
     process = evidence_process(evidence)
     if not process:
         return []
@@ -3175,6 +2918,8 @@ def reconcile_runtime_uris(
         for item in requirements.get("dependencies", [])
         if isinstance(item, dict)
     ]
+    if len(dependencies) != 1:
+        return []
 
     changes: list[dict[str, Any]] = []
     for dependency in dependencies:
@@ -3194,14 +2939,6 @@ def reconcile_runtime_uris(
             continue
         source_dependency = selected_dependency_fact(evidence, client_kind)
         if source_dependency is None:
-            continue
-        if (
-            sum(
-                resource_types.get(item.get("resourceSymbol")) == qualified_type
-                for item in dependencies
-            )
-            != 1
-        ):
             continue
         components = runtime_uri.get("components")
         template = runtime_uri.get("format")
@@ -3233,12 +2970,7 @@ def reconcile_runtime_uris(
             for item in dependency.get("settings", [])
             if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
-        excerpt, excerpt_citations = cited_source_excerpt(
-            source_dependency,
-            source_root=source_root,
-            source_path=source_path,
-        )
-        source_text = json.dumps(source_dependency, sort_keys=True) + "\n" + excerpt
+        source_text = json.dumps(source_dependency, sort_keys=True)
         source_keys = {
             key
             for key in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", source_text)
@@ -3280,136 +3012,48 @@ def reconcile_runtime_uris(
         if scheme not in allowed_schemes:
             continue
 
-        binding = protocol.get("binding") or {}
-        password_setting = settings.get("password")
-        password_delivery = (
-            password_setting.get("delivery")
-            if isinstance(password_setting, dict)
-            else None
-        )
-        expected_secret_key = (
-            password_delivery.get("key")
-            if isinstance(password_delivery, dict)
-            and password_delivery.get("kind") == "secretKeyRef"
-            else None
-        )
-        if not isinstance(expected_secret_key, str):
-            continue
-        actual_secret_key = select_secret_environment_key(
-            source,
-            expected=expected_secret_key,
-            resource_symbol=str(symbol),
-        )
-        if actual_secret_key is None:
-            continue
-        secret_key = (
-            expected_secret_key
-            if re.fullmatch(
-                r"[A-Za-z_][A-Za-z0-9_]*",
-                expected_secret_key,
-            )
-            else f"RADIUS_{upper_snake(str(symbol))}_PASSWORD"
-        )
-        renames = (
-            {actual_secret_key: secret_key}
-            if actual_secret_key != secret_key
-            else {}
-        )
-        additions: dict[str, str] = {}
-        removals: set[str] = set()
-        component_keys: dict[str, str] = {}
         arguments: list[str] = []
+        secret_key = None
+        component_keys: dict[str, str] = {}
+        binding = protocol.get("binding") or {}
         for component in components:
             if component == "port":
-                setting = settings.get(component)
-                delivery = (
-                    setting.get("delivery")
-                    if isinstance(setting, dict)
-                    else None
-                )
-                key = (
-                    delivery.get("key")
-                    if isinstance(delivery, dict)
-                    and delivery.get("kind") in {"env", "literal"}
-                    else None
-                )
-                if (
-                    isinstance(key, str)
-                    and key in environment_keys
-                    and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
-                    and key not in component_keys.values()
-                ):
-                    removals.add(key)
                 port = binding.get("portLiteral", binding.get("port"))
                 if port is None:
                     arguments = []
                     break
                 arguments.append(shlex.quote(str(port)))
                 continue
-            if component == "password":
-                component_keys[component] = secret_key
-                arguments.append(f'"${secret_key}"')
-                continue
             setting = settings.get(component)
             delivery = setting.get("delivery") if isinstance(setting, dict) else None
             key = delivery.get("key") if isinstance(delivery, dict) else None
-            if (
-                isinstance(key, str)
-                and key in environment_keys
-                and delivery.get("kind") in {"env", "literal"}
-            ):
-                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                    normalized = (
-                        f"RADIUS_{upper_snake(str(symbol))}_"
-                        f"{upper_snake(component)}"
-                    )
-                    if key in renames and renames[key] != normalized:
-                        arguments = []
-                        break
-                    renames[key] = normalized
-                    key = normalized
-            else:
-                property_name = binding.get(f"{component}Input")
-                output_name = binding.get(f"{component}Property")
-                if isinstance(property_name, str):
-                    expression = resource_input_expression(
-                        source,
-                        resource_symbol=str(symbol),
-                        property_name=property_name,
-                    )
-                elif isinstance(output_name, str):
-                    expression = (
-                        f"{symbol}.properties.{output_name}"
-                    )
-                else:
-                    expression = None
-                if expression is None:
+            if not isinstance(key, str) or key not in environment_keys:
+                arguments = []
+                break
+            if component == "password":
+                if delivery.get("kind") != "secretKeyRef" or key not in secret_keys:
                     arguments = []
                     break
-                key = (
-                    f"RADIUS_{upper_snake(str(symbol))}_"
-                    f"{upper_snake(component)}"
-                )
-                additions[key] = expression
+                secret_key = key
             component_keys[component] = key
             arguments.append(f'"${key}"')
-        if len(arguments) != len(components):
-            continue
-        if len(set(component_keys.values())) != len(component_keys):
+        if len(arguments) != len(components) or secret_key is None:
             continue
 
-        port_setting = settings.get("port")
-        rewritten_source = rewrite_environment_entries(
-            source,
-            anchor=actual_secret_key,
-            renames=renames,
-            removals=removals,
-            additions=additions,
+        existing = candidate_runtime_command(source, secret_key)
+        expands_secret = bool(
+            existing
+            and re.search(
+                rf"\$(?:\{{{re.escape(secret_key)}\}}|"
+                rf"{re.escape(secret_key)}\b)",
+                existing,
+            )
         )
-        if rewritten_source is None:
-            continue
-
-        base_command = f"exec {process}"
+        base_command = (
+            f"exec {process}"
+            if expands_secret or not existing or process not in existing
+            else existing
+        )
         if encoder_kind == "python":
             python_template = template.replace("<scheme>", scheme)
             for index, component in enumerate(components):
@@ -3477,7 +3121,7 @@ def reconcile_runtime_uris(
         else:
             continue
         rewritten = insert_runtime_command(
-            rewritten_source,
+            source,
             composite_key=composite_key,
             secret_key=secret_key,
             command=command,
@@ -3485,39 +3129,6 @@ def reconcile_runtime_uris(
         if rewritten is None:
             continue
         source = rewritten
-        for component, key in component_keys.items():
-            setting = settings.get(component)
-            delivery = setting.get("delivery") if isinstance(setting, dict) else None
-            if isinstance(delivery, dict):
-                secret_key_name = delivery.get("secretKey")
-                delivery.clear()
-                delivery.update(
-                    {
-                        "kind": (
-                            "secretKeyRef"
-                            if component == "password"
-                            else "env"
-                        ),
-                        "key": key,
-                    }
-                )
-                if component == "password" and secret_key_name:
-                    delivery["secretKey"] = secret_key_name
-        if isinstance(port_setting, dict):
-            port_setting["delivery"] = {
-                "kind": "runtimeConfig",
-                "key": composite_key,
-                "value": binding.get("portLiteral", binding.get("port")),
-            }
-        secret_environment = requirements.get("secretEnvironment", [])
-        if isinstance(secret_environment, list):
-            requirements["secretEnvironment"] = [
-                item
-                for item in secret_environment
-                if isinstance(item, dict)
-                and item.get("key")
-                not in {actual_secret_key, expected_secret_key, secret_key}
-            ] + [{"key": secret_key}]
         for requirement in protocol.get("requiredClientSettings", []):
             name, separator, value = str(requirement).partition("=")
             if not separator or name in components:
@@ -3538,10 +3149,6 @@ def reconcile_runtime_uris(
                 "encoder": encoder_binary,
                 "encoderSource": dockerfile,
                 "componentKeys": component_keys,
-                "sourceCitations": excerpt_citations,
-                "renamedEnvironment": renames,
-                "removedEnvironment": sorted(removals),
-                "addedEnvironment": additions,
             }
         )
     if changes:
