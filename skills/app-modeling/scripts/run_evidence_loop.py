@@ -1192,6 +1192,137 @@ def insert_runtime_command(
     return "".join(lines)
 
 
+def reconcile_stale_secret_composite_env(
+    candidate: Path,
+) -> list[dict[str, str]]:
+    requirements = json.loads((candidate / "requirements.json").read_text())
+    runtime_keys = {
+        delivery.get("key")
+        for dependency in requirements.get("dependencies", [])
+        if isinstance(dependency, dict)
+        for setting in dependency.get("settings", [])
+        if isinstance(setting, dict)
+        for delivery in [setting.get("delivery")]
+        if isinstance(delivery, dict)
+        and delivery.get("kind") == "runtimeConfig"
+        and isinstance(delivery.get("key"), str)
+    }
+    secret_keys = {
+        item.get("key")
+        for item in requirements.get("secretEnvironment", [])
+        if isinstance(item, dict) and isinstance(item.get("key"), str)
+    }
+    if not runtime_keys or not secret_keys:
+        return []
+
+    source_path = candidate / "app.bicep"
+    lines = source_path.read_text().splitlines(keepends=True)
+    removals: list[tuple[int, int, str, str]] = []
+    for runtime_key in sorted(runtime_keys):
+        key_pattern = re.compile(
+            rf"^(\s*)(?:'|\")?{re.escape(runtime_key)}(?:'|\")?"
+            r"\s*:\s*\{\s*$"
+        )
+        for key_index, line in enumerate(lines):
+            match = key_pattern.match(line)
+            if not match:
+                continue
+            key_indent = match.group(1)
+            env_indent = key_indent[:-2]
+            env_index = next(
+                (
+                    index
+                    for index in range(key_index - 1, -1, -1)
+                    if re.match(
+                        rf"^{re.escape(env_indent)}env\s*:\s*\{{\s*$",
+                        lines[index],
+                    )
+                ),
+                None,
+            )
+            if env_index is None:
+                continue
+            depth = 0
+            env_end = None
+            for index in range(env_index, len(lines)):
+                depth += lines[index].count("{") - lines[index].count("}")
+                if index > env_index and depth == 0:
+                    env_end = index
+                    break
+            if env_end is None or key_index >= env_end:
+                continue
+            depth = 0
+            key_end = None
+            for index in range(key_index, env_end + 1):
+                depth += lines[index].count("{") - lines[index].count("}")
+                if index > key_index and depth == 0:
+                    key_end = index + 1
+                    break
+            if key_end is None:
+                continue
+            key_text = "".join(lines[key_index:key_end])
+            if not re.search(r"(?m)^\s*value\s*:", key_text):
+                continue
+            container_indent = env_indent[:-2]
+            container_index = next(
+                (
+                    index
+                    for index in range(env_index - 1, -1, -1)
+                    if re.match(
+                        rf"^{re.escape(container_indent)}(?:"
+                        r"[A-Za-z_][A-Za-z0-9_-]*|'[^']+'|\"[^\"]+\""
+                        r")\s*:\s*\{\s*$",
+                        lines[index],
+                    )
+                ),
+                None,
+            )
+            if container_index is None:
+                continue
+            depth = 0
+            container_end = None
+            for index in range(container_index, len(lines)):
+                depth += lines[index].count("{") - lines[index].count("}")
+                if index > container_index and depth == 0:
+                    container_end = index + 1
+                    break
+            if container_end is None:
+                continue
+            container_text = "".join(lines[container_index:container_end])
+            if not re.search(
+                rf"\bexport\s+{re.escape(runtime_key)}\s*=",
+                container_text,
+            ):
+                continue
+            secret_key = next(
+                (
+                    key
+                    for key in sorted(secret_keys)
+                    if re.search(
+                        rf"\$(?:\{{{re.escape(key)}\}}|{re.escape(key)}\b)",
+                        key_text,
+                    )
+                    and re.search(
+                        rf"\$(?:\{{{re.escape(key)}\}}|{re.escape(key)}\b)",
+                        container_text,
+                    )
+                ),
+                None,
+            )
+            if secret_key:
+                removals.append(
+                    (key_index, key_end, runtime_key, secret_key)
+                )
+    for start, end, _, _ in sorted(removals, reverse=True):
+        del lines[start:end]
+    if removals:
+        source_path.write_text("".join(lines))
+    return [
+        {"runtimeKey": runtime_key, "secretEnvironment": secret_key}
+        for _, _, runtime_key, secret_key in removals
+    ]
+
+
 def reconcile_runtime_composites(
     candidate: Path,
     authoring_contract: dict[str, Any],
@@ -1662,6 +1793,7 @@ Expected/golden application definitions are unavailable.
                 "requirementChanges": [],
                 "bicepConfigChanges": [],
                 "runtimeCompositeChanges": [],
+                "secretCompositeEnvChanges": [],
                 "optionalVersionChanges": [],
                 "publishedImageChanges": [],
                 "bicepExpressionChanges": [],
@@ -1685,6 +1817,9 @@ Expected/golden application definitions are unavailable.
                     authoring_contract,
                     evidence,
                 )
+            )
+            reconciliation["secretCompositeEnvChanges"] = (
+                reconcile_stale_secret_composite_env(candidate)
             )
         write_json(run_dir / "reconciliation-1.json", reconciliation)
         validation = (
@@ -1780,6 +1915,9 @@ candidate files.
                     authoring_contract,
                     evidence,
                 )
+            )
+            reconciliation["secretCompositeEnvChanges"] = (
+                reconcile_stale_secret_composite_env(candidate)
             )
             write_json(run_dir / "reconciliation-2.json", reconciliation)
             validation = validate_all(
