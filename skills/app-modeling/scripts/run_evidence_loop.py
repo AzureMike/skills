@@ -325,6 +325,33 @@ def normalize_review(value: dict[str, Any]) -> dict[str, Any]:
             value["verdict"] = "needs_more_info"
         if not isinstance(value.get("findings"), list):
             value["findings"] = []
+        normalized_findings = []
+        for finding in value["findings"]:
+            if not isinstance(finding, dict):
+                finding = {"message": str(finding)}
+            normalized_findings.append(
+                {
+                    "code": str(finding.get("code", "INDEPENDENT_REVIEW")),
+                    "message": str(
+                        finding.get("message", "Independent review failed.")
+                    ),
+                    "source": str(
+                        finding.get("source", finding.get("evidence", ""))
+                    ),
+                    "candidate": str(
+                        finding.get("candidate", finding.get("path", ""))
+                    ),
+                    "correction": str(
+                        finding.get(
+                            "correction",
+                            "Resolve the cited source or contract mismatch.",
+                        )
+                    ),
+                }
+            )
+        value["findings"] = normalized_findings
+        if value["verdict"] == "accepted" and normalized_findings:
+            value["verdict"] = "rejected"
         if not isinstance(value.get("summary"), str):
             value["summary"] = f"Independent auditor returned {value['verdict']}."
         return value
@@ -1631,6 +1658,7 @@ and {run_dir / 'validation-2.json'}. Return only compact audit JSON.
         status["audit"] = {
             "verdict": review.get("verdict"),
             "summary": review.get("summary"),
+            "findings": review.get("findings", [])[:8],
         }
         if not validation.get("valid"):
             status["reason"] = "mechanical validation rejected the candidate"
