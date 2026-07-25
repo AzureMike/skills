@@ -44,11 +44,14 @@ optional dynamic-configuration subsystem merely to make the process start.
 
 For every workload:
 
-- Prove whether its Dockerfile builds from a clean checkout. Use `image.kind:
-  build` only when it does. A non-default Docker build target is unsupported
-  and must be a blocker.
-- Use `image.kind: published` only for an immutable first-party image tied to
-  the exact source tag. Cite both the source Dockerfile and release publication.
+- Decide whether the Dockerfile builds this application from a clean checkout
+  of this repository at this revision. A Dockerfile that compiles the source
+  does; one that only copies an artifact produced elsewhere, such as a jar or
+  binary supplied through a build argument, does not. Use `image.kind: build`
+  when it does, and cite the stage that compiles. Otherwise use `image.kind:
+  published`, name the `prebuiltReason`, and cite the line in that Dockerfile
+  that proves it. Prefer building: a published image is the exception. A
+  non-default Docker build target is unsupported and must be a blocker.
 - Trace the effective image ENTRYPOINT/CMD. Use `process.kind: imageDefault`
   only when no runtime wrapper can be required. Otherwise record the exact
   source process as argv or shell without changing it.
@@ -60,19 +63,7 @@ For every workload:
 
 For every dependency, assign one canonical `kind` and list each consuming
 workload. Record source-native client delivery under `settings`; never invent
-environment names. Use these semantic slots where applicable:
-
-- databases: `host`, `port`, `database`, `username`, `password`,
-  `connectionUri`, `tls`, `certificateValidation`, `authMode`
-- Kafka: `bootstrapServers`, `security.protocol`, `sasl.mechanism`,
-  `sasl.jaas.config`
-- RabbitMQ: `protocol`, `tls`, `sasl.mechanism`, `sasl.user`,
-  `sasl.password`, `target_address`, `source_address`
-- Redis: `uri`
-- AI/search: `endpoint`, `apiKey`, `indexName`, `apiVersion`,
-  `deploymentOrModel`
-- object storage: `endpoint`, `container`, `accountName`,
-  `accountKeyOrConnectionString`
+environment names. The settings each kind requires are listed in the prompt.
 
 Use `delivery.kind: environment` with the exact consumed name, or
 `sourceDefault` only for a proven unchanged default. Put database names,

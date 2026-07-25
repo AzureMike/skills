@@ -84,6 +84,7 @@
             "tls",
             "certificateValidation",
             "authMode",
+            "sslmode",
             "encrypt",
             "trustServerCertificate",
             "bootstrapServers",
@@ -254,7 +255,7 @@
                 "required": [
                   "kind",
                   "reference",
-                  "sourceDockerfile",
+                  "prebuiltReason",
                   "citation"
                 ],
                 "additionalProperties": false,
@@ -272,6 +273,14 @@
                   },
                   "citation": {
                     "$ref": "#/$defs/citation"
+                  },
+                  "prebuiltReason": {
+                    "description": "Why this image is taken from a registry instead of built from this repository. Choose it by asking whether the Dockerfile could be built from a clean checkout of this repository at this commit.",
+                    "enum": [
+                      "dockerfilePackagesPrebuiltArtifact",
+                      "dockerfileAbsentFromRepository",
+                      "imageBuiltByAnotherRepository"
+                    ]
                   }
                 }
               }

@@ -173,6 +173,79 @@ def parse_source_model(
     return model, source_errors(model, contract)
 
 
+def reportable_slots(schema: dict) -> set[str]:
+    """The slot names the source-model schema actually lets the analyst name."""
+
+    found: set[str] = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "slot" and isinstance(value, dict) and "enum" in value:
+                    found.update(value["enum"])
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(schema)
+    return found
+
+
+def slot_guide(contract: dict, schema: dict) -> str:
+    """Describe each service's client settings straight from the contract.
+
+    The analyst has to know which settings a backing service needs, but that is
+    contract knowledge. Deriving it here keeps one source of truth, so a service
+    added to the contract describes itself to the analyst automatically.
+    """
+
+    reportable = reportable_slots(schema)
+    lines = []
+    for profile in sorted(
+        contract["protocolProfiles"].values(),
+        key=lambda item: item.get("sourceKind") or "",
+    ):
+        kind = profile.get("sourceKind")
+        if not kind:
+            continue
+        alternatives = []
+        hidden: set[str] = set()
+        for composite in (
+            profile.get("runtimeUri"),
+            profile.get("runtimeComposite"),
+        ):
+            if not composite:
+                continue
+            # A component the schema cannot name is only ever delivered inside
+            # the composite, so it is not something the analyst can report.
+            hidden |= {
+                name
+                for name in composite.get("satisfies", [])
+                if name not in reportable
+            }
+            alternatives.append(composite)
+        required = [
+            entry.partition("=")[0]
+            for entry in (profile.get("requiredClientSettings") or [])
+            if entry.partition("=")[0] not in hidden
+        ]
+        offered = [
+            composite["setting"]
+            for composite in alternatives
+            if composite["setting"] not in required
+            and set(composite.get("satisfies", [])) & set(required)
+        ]
+        if not required:
+            lines.append(f"- {kind}: no required settings")
+            continue
+        line = f"- {kind}: {', '.join(required)}"
+        if offered:
+            line += f"; or {', '.join(offered)} alone, which carries them all"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=".")
@@ -253,6 +326,11 @@ Exact tags: {json.dumps(tags)}
 
 Return one JSON object only. Use status complete only when every required field
 is closed with file:line evidence and blockers is empty.
+
+Each backing service kind needs these client settings recorded under
+`settings`, with the exact environment variable name the source consumes:
+
+{slot_guide(contract, json.loads(SOURCE_SCHEMA_PATH.read_text()))}
 """
         evidence = invoke(
             target=target,

@@ -331,6 +331,24 @@ def source_errors(model: dict[str, Any], contract: dict[str, Any]) -> list[str]:
                     f"$.workloads[{index}].image.reference: published image "
                     "must use an immutable version or digest"
                 )
+            # Taking a prebuilt image forfeits building this repository, so the
+            # reason has to be evidenced where it is observable: in the
+            # Dockerfile that cannot be built from a clean checkout.
+            if image["prebuiltReason"] == "dockerfilePackagesPrebuiltArtifact":
+                dockerfile = image.get("sourceDockerfile")
+                cited = image["citation"].rpartition(":")[0]
+                if not dockerfile:
+                    errors.append(
+                        f"$.workloads[{index}].image.sourceDockerfile: required "
+                        "when the reason is that the Dockerfile packages a "
+                        "prebuilt artifact"
+                    )
+                elif cited != dockerfile:
+                    errors.append(
+                        f"$.workloads[{index}].image.citation: must cite "
+                        f"{dockerfile!r}, the file said to package a prebuilt "
+                        f"artifact, not {cited!r}"
+                    )
         for config_index, setting in enumerate(workload["configuration"]):
             if setting["sensitive"] and setting["value"]["kind"] != "developerInput":
                 errors.append(
