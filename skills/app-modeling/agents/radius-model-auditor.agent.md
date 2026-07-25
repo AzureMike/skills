@@ -44,7 +44,9 @@ When the candidate selects `runtimeUri`, require the source-supported setting
 and scheme, exact verified components, literal port and options,
 percent-encoding of every declared component, secure secret input, and the
 original process after export. Do not require a URI when cited discrete inputs
-express the complete tuple.
+express the complete tuple. Treat non-native environment keys used only as
+mechanically validated composite inputs as helpers, not invented application
+settings. Reject secret expansion into the final process arguments.
 For a shell-built composite, interpret the compiled shell rather than the
 Bicep escape spelling. An outer double-quoted assignment with `\"` around
 fields, `\$name` for a required literal dollar value, and `$SECRET_ENV` for the

@@ -2124,6 +2124,23 @@ def reconcile_published_images(
 
     source_path = candidate / "app.bicep"
     source = source_path.read_text()
+    image = next(iter(images))
+    direct_pattern = re.compile(
+        rf"(?m)^(\s*image\s*:\s*)'"
+        rf"{re.escape(image)}@sha256:[0-9a-fA-F]{{64}}'(\s*)$"
+    )
+    source, direct_count = direct_pattern.subn(
+        rf"\1'{image}'\2",
+        source,
+    )
+    direct_changes = (
+        [{"image": image, "removedUnverifiedDigest": "true"}]
+        if direct_count
+        else []
+    )
+    if direct_count:
+        source_path.write_text(source)
+
     declarations = list(
         re.finditer(
             r"(?m)^resource\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
@@ -2132,12 +2149,12 @@ def reconcile_published_images(
         )
     )
     if len(declarations) != 1:
-        return []
+        return direct_changes
     declaration = declarations[0]
     symbol = declaration.group(1)
     reference = f"{symbol}.properties.imageReference"
     if reference not in source:
-        return []
+        return direct_changes
     depth = 0
     end = None
     for index in range(declaration.end() - 1, len(source)):
@@ -2146,16 +2163,15 @@ def reconcile_published_images(
             end = index + 1
             break
     if end is None:
-        return []
+        return direct_changes
     while end < len(source) and source[end] in "\r\n":
         end += 1
-    image = next(iter(images))
     rewritten = source[: declaration.start()] + source[end:]
     rewritten = rewritten.replace(reference, f"'{image}'")
     if reference in rewritten:
-        return []
+        return direct_changes
     source_path.write_text(rewritten)
-    return [{"resourceSymbol": symbol, "image": image}]
+    return direct_changes + [{"resourceSymbol": symbol, "image": image}]
 
 
 def upper_snake(value: str) -> str:
@@ -2247,7 +2263,11 @@ def evidence_process(
 
 
 def bicep_single_quoted(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("'", "\\'")
+    return (
+        value.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("${", r"\${")
+    )
 
 
 def insert_runtime_command(
@@ -2793,12 +2813,12 @@ def selected_dependency_fact(
     return matching[0] if len(matching) == 1 else None
 
 
-def source_runtime_python(
+def source_runtime_encoder(
     evidence: dict[str, Any],
     *,
     source_root: Path,
     source_path: str,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str] | None:
     facts = evidence.get("facts")
     workloads = facts.get("workloads", []) if isinstance(facts, dict) else []
     if isinstance(workloads, dict):
@@ -2841,7 +2861,8 @@ def source_runtime_python(
     final_stage = logical_source[from_lines[-1].start() :]
     install = re.search(
         r"(?im)^\s*RUN\s+.*\b(?:apk\s+add|apt(?:-get)?\s+install|"
-        r"dnf\s+install|yum\s+install)\b[^\n]{0,1200}\b(python3|python)\b",
+        r"dnf\s+install|yum\s+install)\b[^\n]{0,1200}"
+        r"\b(python3|python|curl)\b",
         final_stage,
     )
     if not install:
@@ -2850,7 +2871,9 @@ def source_runtime_python(
         relative = dockerfile.resolve().relative_to(source_root.resolve())
     except ValueError:
         return None
-    return install.group(1), relative.as_posix()
+    binary = install.group(1)
+    kind = "python" if binary.startswith("python") else binary
+    return binary, kind, relative.as_posix()
 
 
 def reconcile_runtime_uris(
@@ -2872,24 +2895,30 @@ def reconcile_runtime_uris(
             source,
         )
     }
-    python_runtime = source_runtime_python(
+    runtime_encoder = source_runtime_encoder(
         evidence,
         source_root=source_root,
         source_path=source_path,
     )
-    if python_runtime is None:
+    if runtime_encoder is None:
         return []
-    python_binary, dockerfile = python_runtime
+    encoder_binary, encoder_kind, dockerfile = runtime_encoder
     environment_keys = container_environment_keys(source)
     secret_keys = secret_key_ref_environment_keys(source)
     process = evidence_process(evidence)
     if not process:
         return []
 
+    dependencies = [
+        item
+        for item in requirements.get("dependencies", [])
+        if isinstance(item, dict)
+    ]
+    if len(dependencies) != 1:
+        return []
+
     changes: list[dict[str, Any]] = []
-    for dependency in requirements.get("dependencies", []):
-        if not isinstance(dependency, dict):
-            continue
+    for dependency in dependencies:
         symbol = dependency.get("resourceSymbol")
         qualified_type = resource_types.get(symbol)
         protocol = (
@@ -2978,11 +3007,6 @@ def reconcile_runtime_uris(
         scheme = next(iter(source_schemes))
         if scheme not in allowed_schemes:
             continue
-        if re.search(
-            rf"\bexport\s+{re.escape(composite_key)}\s*=",
-            source,
-        ):
-            continue
 
         arguments: list[str] = []
         secret_key = None
@@ -3012,35 +3036,86 @@ def reconcile_runtime_uris(
         if len(arguments) != len(components) or secret_key is None:
             continue
 
-        python_template = template.replace("<scheme>", scheme)
-        for index, component in enumerate(components):
-            python_template = python_template.replace(
-                f"<{component}>",
-                "{" + str(index) + "}",
-            )
-        encoded_indexes = tuple(
-            index
-            for index, component in enumerate(components)
-            if component in encoded_components
-        )
-        python_code = (
-            "import sys; from urllib.parse import quote; "
-            "values=sys.argv[1:]; "
-            f"encoded=[quote(value, safe=\"\") if index in "
-            f"{encoded_indexes!r} else value for index, value in enumerate(values)]; "
-            f"print({python_template!r}.format(*encoded))"
-        )
         existing = candidate_runtime_command(source, secret_key)
-        base_command = (
+        expands_secret = bool(
             existing
-            if existing and process in existing
-            else f"exec {process}"
+            and re.search(
+                rf"\$(?:\{{{re.escape(secret_key)}\}}|"
+                rf"{re.escape(secret_key)}\b)",
+                existing,
+            )
         )
-        command = (
-            f'export {composite_key}="$({python_binary} -c '
-            f"{shlex.quote(python_code)} {' '.join(arguments)})\"; "
-            f"{base_command}"
+        base_command = (
+            f"exec {process}"
+            if expands_secret or not existing or process not in existing
+            else existing
         )
+        if encoder_kind == "python":
+            python_template = template.replace("<scheme>", scheme)
+            for index, component in enumerate(components):
+                python_template = python_template.replace(
+                    f"<{component}>",
+                    "{" + str(index) + "}",
+                )
+            encoded_indexes = tuple(
+                index
+                for index, component in enumerate(components)
+                if component in encoded_components
+            )
+            python_code = (
+                "import sys; from urllib.parse import quote; "
+                "values=sys.argv[1:]; "
+                f"encoded=[quote(value, safe=\"\") if index in "
+                f"{encoded_indexes!r} else value "
+                "for index, value in enumerate(values)]; "
+                f"print({python_template!r}.format(*encoded))"
+            )
+            command = (
+                f'export {composite_key}="$({encoder_binary} -c '
+                f"{shlex.quote(python_code)} {' '.join(arguments)})\"; "
+                f"{base_command}"
+            )
+        elif encoder_kind == "curl":
+            uri_expression = template.replace("<scheme>", scheme)
+            encoded_assignments: list[str] = []
+            for component in components:
+                if component == "port":
+                    value = str(
+                        binding.get("portLiteral", binding.get("port"))
+                    )
+                else:
+                    key = component_keys[component]
+                    if component in encoded_components:
+                        encoded_key = f"uri_{component}"
+                        encoded_assignments.append(
+                            f'{encoded_key}=$(uri_encode "${key}") '
+                            "|| exit $?"
+                        )
+                        value = f"${encoded_key}"
+                    else:
+                        value = f"${key}"
+                uri_expression = uri_expression.replace(
+                    f"<{component}>",
+                    value,
+                )
+            command = (
+                "uri_encode() { "
+                "encoded=$(printf '%s' \"$1\" | curl -Gs "
+                "--unix-socket /dev/null -o /dev/null "
+                "-w '%{url_effective}' --data-urlencode 'x@-' "
+                "http://localhost/ || true); "
+                "case \"$encoded\" in "
+                "'http://localhost/?x='*) ;; *) return 1 ;; esac; "
+                r"encoded=${encoded#*\?x=}; "
+                'while [ "${encoded#*+}" != "$encoded" ]; do '
+                'encoded="${encoded%%+*}%20${encoded#*+}"; done; '
+                "printf '%s' \"$encoded\"; }; "
+                f"{'; '.join(encoded_assignments)}; "
+                f'export {composite_key}="{uri_expression}"; '
+                f"{base_command}"
+            )
+        else:
+            continue
         rewritten = insert_runtime_command(
             source,
             composite_key=composite_key,
@@ -3067,7 +3142,7 @@ def reconcile_runtime_uris(
                 "resourceSymbol": str(symbol),
                 "setting": composite_key,
                 "format": template,
-                "encoder": python_binary,
+                "encoder": encoder_binary,
                 "encoderSource": dockerfile,
                 "componentKeys": component_keys,
             }

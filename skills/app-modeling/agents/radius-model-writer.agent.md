@@ -71,7 +71,8 @@ requires a generated artifact absent from Git and the same exact checked-out
 release tag publishes an official first-party image, use only that cited exact
 release image and omit `containerImages`. Do not make this fallback from a
 branch, commit without a corresponding release, mutable image tag, or
-third-party repackaging. Use
+third-party repackaging. Never append an image digest unless the independent
+evidence cites that exact digest for the selected release image. Use
 `git::<remote>//<context>?ref=<full-commit-or-immutable-tag>` for `build.source`
 and make `tag` equal the ref. Emit a `Radius.Core/applications` resource and
 declare exactly `param environment string`; bind every Radius resource's
@@ -142,6 +143,7 @@ tuple without exposing a secret in process arguments. For a selected URI,
 export it before exec using the source-native scheme and verified components.
 Percent-encode every declared component with an encoder proven present in the
 selected runtime image; keep secret components in `secretKeyRef` inputs.
+Never expand a secret helper into the final process arguments.
 
 Every backing dependency needs complete app-native configuration plus a Radius
 connection. Set `disableDefaultEnvVars: true` unless source consumes the exact

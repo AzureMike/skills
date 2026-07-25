@@ -679,8 +679,15 @@ def validate_requirements(template, contract, requirements, errors):
                         command_text,
                     )
                     or not (
-                        "urllib.parse import quote" in command_text
-                        and 'safe=""' in command_text
+                        (
+                            "urllib.parse import quote" in command_text
+                            and 'safe=""' in command_text
+                        )
+                        or (
+                            "--data-urlencode" in command_text
+                            and "--unix-socket /dev/null" in command_text
+                            and "%20" in command_text
+                        )
                     )
                 ):
                     error(

@@ -114,9 +114,11 @@ tests, or another build. If it copies a generated artifact that the Docker
 build itself does not create, inspect this revision's build/release metadata.
 When the exact
 checked-out release tag is proven to publish an official application image,
-record that exact image and tag as `build.mode: publishedRelease`; otherwise
-report a packaging blocker. This exception is only for a source-corresponding
-first-party release artifact, never an arbitrary convenience image.
+record that exact image and tag as `build.mode: publishedRelease`, while
+retaining the selected Dockerfile path and citation so runtime tools remain
+provable; otherwise report a packaging blocker. This exception is only for a
+source-corresponding first-party release artifact, never an arbitrary
+convenience image.
 
 Do not read `SKILL.md`, files under `references/`, validator source, query
 `--help`, enumerate Radius types, or use network tools. Prefer production
@@ -144,6 +146,11 @@ argument. Require operator-defined configuration to enter through a secure
 parameter, an authored secret, and `secretKeyRef`. A replacement recommendation must cover endpoint,
 port, protocol, TLS, auth, secrets, persistence, process, native settings, and
 graph impact together.
+Allow a mechanically validated shell wrapper that builds a cited native
+composite from non-native helper inputs and then execs the exact image process.
+Those helpers are not invented application settings. Reject a secret expanded
+into process arguments; require an encoded native environment composite or a
+cited secret-file mechanism instead.
 
 Bicep multiline strings preserve shell `${...}` literally. Reject `$${...}` in
 container scripts because the compiled script retains both dollar signs and
