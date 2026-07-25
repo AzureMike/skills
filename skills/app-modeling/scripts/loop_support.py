@@ -18,7 +18,6 @@ from typing import Any
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 AGENT_NAMES = (
-    "radius-model-writer",
     "radius-model-reviewer",
     "radius-model-auditor",
 )
@@ -82,6 +81,13 @@ def run_bounded(
     cwd: Path,
     timeout: float,
 ) -> tuple[int, str, str, bool]:
+    def text(
+        current: str | bytes | None,
+        fallback: str | bytes | None,
+    ) -> str:
+        value = current if current is not None else fallback
+        return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+
     process = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -93,14 +99,30 @@ def run_bounded(
     try:
         stdout, stderr = process.communicate(timeout=max(1, timeout))
         return process.returncode, stdout, stderr, False
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as first:
         descendants = descendant_processes(process.pid)
         terminate_processes(process, descendants, signal.SIGTERM)
         try:
             stdout, stderr = process.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
-            terminate_processes(process, descendants, signal.SIGKILL)
-            stdout, stderr = process.communicate()
+        except subprocess.TimeoutExpired as second:
+            terminate_processes(
+                process,
+                descendants + descendant_processes(process.pid),
+                signal.SIGKILL,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=2)
+            except subprocess.TimeoutExpired as final:
+                if process.stdout is not None:
+                    process.stdout.close()
+                if process.stderr is not None:
+                    process.stderr.close()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                stdout = text(final.stdout, second.stdout or first.stdout)
+                stderr = text(final.stderr, second.stderr or first.stderr)
         return 124, stdout, stderr, True
 
 

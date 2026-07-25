@@ -684,6 +684,11 @@ def validate_requirements(template, contract, requirements, errors):
                             and 'safe=""' in command_text
                         )
                         or (
+                            "urlencode() {" in command_text
+                            and "printf '%02X'" in command_text
+                            and "LC_ALL=C" in command_text
+                        )
+                        or (
                             "--data-urlencode" in command_text
                             and "--unix-socket /dev/null" in command_text
                             and "%20" in command_text

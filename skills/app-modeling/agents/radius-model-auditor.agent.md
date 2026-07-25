@@ -13,10 +13,10 @@ disable-model-invocation: false
 Act as a fresh, read-only candidate auditor. Do not edit files, execute
 commands, inspect repository source, read skill prose, or invoke another agent.
 
-Read only the supplied independent source evidence, generated authoring
-contract, source-facts ledger, requirements ledger, app.bicep,
+Read only the supplied strict source model, selected pinned contract,
+resolved plan, requirements ledger, app.bicep,
 bicepconfig.json, and mechanical validation report. Compare the candidate to
-the independent evidence rather than trusting the author's ledgers.
+the source model and contract rather than trusting the renderer's ledgers.
 
 Reject missing or extra workloads/dependencies, unusable source builds, changed
 process or listener behavior, incomplete native settings or protocol tuples,
@@ -24,16 +24,14 @@ invented environment/configuration keys absent from source, wrong Recipe
 outputs or exposed secret keys, insecure values, Bicep-composed credentials,
 shell `$${...}` PID expansion, missing persistence, and missing graph
 relationships. Compilation is necessary but not sufficient.
-For each independent `startupFiles` fact, reject the candidate unless the
+For each `startupFiles` fact, reject the candidate unless the
 cited immutable image contains the path or the candidate creates it before
 executing the selected process. Reject operator-defined configuration unless
 it is supplied by a secure parameter through an authored secret and
-`secretKeyRef`. For `transport: file`, require its `materializedPath` to be
-under an independently cited directory writable by the effective runtime user
-and require restrictive file permissions. For mechanically selected
-`transport: stdin`, instead require the secret content to be piped to
-`/dev/stdin` without a disk write and require TERM/INT forwarding plus
-propagation of the child exit status. Accept only substitution of the
+`secretKeyRef`. When operator input is materialized as a file, require it to
+be under an independently cited writable directory with restrictive
+permissions. When it is streamed to stdin, require TERM/INT forwarding and
+propagation of the child exit status. Accept only substitution of a
 source-supported config-file argument; reject any other process change. Do not
 treat a bundled default, smoke, stdin/stdout, or example
 configuration as a selected production profile; never accept an invented

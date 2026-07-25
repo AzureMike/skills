@@ -37,13 +37,12 @@ python3 "<skill-directory>/scripts/run_evidence_loop.py" \
   --request "<complete user request verbatim>"
 ```
 
-The workflow first closes cited source facts without Radius context, then
-selects the matching verified contract bundles mechanically. A separate writer
-reconciles protocol, secret, composite, graph, and persistence requirements
-before authoring. The parent compiles and validates the exact candidate, an
-independent auditor reviews it against the source facts and contracts, and the
-writer receives at most one finding-directed repair. The default internal
-deadline is 360 seconds.
+The workflow asks one read-only analyst for a strict, schema-validated,
+source-only runtime model. Deterministic code then resolves the pinned Radius
+contracts, normalizes protocol, secret, composite, graph, and persistence
+bindings, and renders both output files. The compiler and mechanical validator
+check the exact result before one independent read-only audit. No agent authors
+or repairs Bicep. The default internal deadline is 300 seconds.
 
 Treat the final JSON object as authoritative. On failure, report its reason and
 artifact directory. Do not retry, inspect internal artifacts, edit the

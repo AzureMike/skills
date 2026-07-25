@@ -1,0 +1,500 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "citation": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[^:]+:[0-9]+(?:-[0-9]+)?$"
+    },
+    "citedScalar": {
+      "type": "object",
+      "required": ["value", "citation"],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": ["string", "integer", "number", "boolean"]
+        },
+        "citation": {
+          "$ref": "#/$defs/citation"
+        }
+      }
+    },
+    "inputValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "literal"
+            },
+            "value": {
+              "type": ["string", "integer", "number", "boolean"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "developerInput"
+            }
+          }
+        }
+      ]
+    },
+    "runtimeSetting": {
+      "type": "object",
+      "required": ["slot", "delivery", "citation"],
+      "additionalProperties": false,
+      "properties": {
+        "slot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delivery": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "name"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "environment"
+                },
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["kind"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "sourceDefault"
+                }
+              }
+            }
+          ]
+        },
+        "sourceDefault": {
+          "type": ["string", "integer", "number", "boolean"]
+        },
+        "scheme": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*$"
+        },
+        "citation": {
+          "$ref": "#/$defs/citation"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "status",
+    "application",
+    "workloads",
+    "dependencies",
+    "startupFiles",
+    "persistence",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "status": {
+      "enum": ["complete", "blocked"]
+    },
+    "application": {
+      "type": "object",
+      "required": ["name", "citation"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "citation": {
+          "$ref": "#/$defs/citation"
+        }
+      }
+    },
+    "workloads": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "image",
+          "process",
+          "listeners",
+          "configuration",
+          "writablePaths",
+          "citation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "image": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "dockerfile",
+                  "context",
+                  "citation"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "build"
+                  },
+                  "dockerfile": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "context": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "citation": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "reference",
+                  "sourceDockerfile",
+                  "citation"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "published"
+                  },
+                  "reference": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "sourceDockerfile": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "citation": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              }
+            ]
+          },
+          "process": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["kind", "citation"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "imageDefault"
+                  },
+                  "citation": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "argv", "citation"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "argv"
+                  },
+                  "argv": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "citation": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "command", "citation"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "shell"
+                  },
+                  "command": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "citation": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              }
+            ]
+          },
+          "listeners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "port",
+                "protocol",
+                "external",
+                "citation"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "protocol": {
+                  "enum": ["http", "tcp"]
+                },
+                "external": {
+                  "type": "boolean"
+                },
+                "citation": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "configuration": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value",
+                "sensitive",
+                "citation"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "value": {
+                  "$ref": "#/$defs/inputValue"
+                },
+                "sensitive": {
+                  "type": "boolean"
+                },
+                "citation": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "writablePaths": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "citation"],
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "citation": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "citation": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "workloadIds",
+          "inputs",
+          "settings",
+          "citation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "kind": {
+            "enum": [
+              "mysql",
+              "postgresql",
+              "sql-server",
+              "mongodb",
+              "redis",
+              "kafka",
+              "rabbitmq",
+              "ai-model",
+              "ai-search",
+              "object-storage"
+            ]
+          },
+          "workloadIds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "value", "citation"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "$ref": "#/$defs/inputValue"
+                },
+                "citation": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "settings": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/runtimeSetting"
+            }
+          },
+          "citation": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      }
+    },
+    "startupFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "workloadId",
+          "path",
+          "delivery",
+          "citation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "workloadId": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "delivery": {
+            "enum": ["image", "operatorInput"]
+          },
+          "citation": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      }
+    },
+    "persistence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["workloadId", "path", "citation"],
+        "additionalProperties": false,
+        "properties": {
+          "workloadId": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "citation": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message", "citations"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/citation"
+            }
+          }
+        }
+      }
+    }
+  }
+}
