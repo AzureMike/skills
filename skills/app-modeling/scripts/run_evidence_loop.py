@@ -3392,7 +3392,7 @@ def main() -> int:
     parser.add_argument("--request", required=True)
     parser.add_argument("--deadline-seconds", type=float, default=420)
     parser.add_argument("--evidence-timeout", type=float, default=70)
-    parser.add_argument("--author-timeout", type=float, default=150)
+    parser.add_argument("--author-timeout", type=float, default=100)
     parser.add_argument("--review-timeout", type=float, default=45)
     parser.add_argument("--repair-timeout", type=float, default=60)
     parser.add_argument("--final-review-timeout", type=float, default=30)
@@ -3704,7 +3704,35 @@ Expected/golden application definitions are unavailable.
             effort="low",
         )
         status["author"] = public_invocation(author_invocation)
+        candidate_files = list(candidate.iterdir())
         handoff_errors = validate_handoff(candidate)
+        if (
+            handoff_errors
+            and remaining(deadline) > 30
+        ):
+            if candidate_files:
+                shutil.copytree(candidate, run_dir / "candidate-incomplete")
+            writer_session = str(uuid.uuid4())
+            author_invocation = invoke(
+                target=target,
+                run_dir=run_dir,
+                label="writer-handoff-retry",
+                agent="radius-model-writer",
+                session_id=writer_session,
+                prompt=(
+                    "The prior writer process ended without a complete valid "
+                    "four-file handoff. Replace or complete the four files "
+                    "directly under the Candidate directory from "
+                    f"{run_dir / 'reviewer-evidence.json'}, "
+                    f"{run_dir / 'authoring-contract.json'}, and "
+                    f"{SKILL_DIR / 'schemas' / 'requirements.schema.json'}. "
+                    "Return immediately after writing.\n" + common
+                ),
+                timeout=min(args.author_timeout, remaining(deadline)),
+                effort="low",
+            )
+            status["authorRetry"] = public_invocation(author_invocation)
+            handoff_errors = validate_handoff(candidate)
         if author_invocation["processExit"] != 0 and handoff_errors:
             status["authorHandoffErrors"] = handoff_errors[:8]
             status["reason"] = "author failed"
