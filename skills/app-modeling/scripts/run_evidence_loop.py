@@ -1312,6 +1312,24 @@ def reconcile_fixed_source_ports(
                 and override.get("default") is not None
             ):
                 fixed_ports.setdefault(kind, set()).add(str(override["default"]))
+        source_defaults = dependency.get("sourceDefaults")
+        client_tuple = dependency.get("supportedClientTuple")
+        endpoint_composition = str(
+            dependency.get("endpointComposition", "")
+        ).lower()
+        if (
+            isinstance(source_defaults, dict)
+            and isinstance(client_tuple, dict)
+            and source_defaults.get("port") is not None
+            and source_defaults.get("port") == client_tuple.get("port")
+            and (
+                "fixed port" in endpoint_composition
+                or "hardcoded port" in endpoint_composition
+            )
+        ):
+            fixed_ports.setdefault(kind, set()).add(
+                str(source_defaults["port"])
+            )
 
     source_path = candidate / "app.bicep"
     resource_types = {
@@ -1328,6 +1346,7 @@ def reconcile_fixed_source_ports(
     requirements_path = candidate / "requirements.json"
     requirements = json.loads(requirements_path.read_text())
     changes: list[dict[str, Any]] = []
+    env_keys_to_remove: set[str] = set()
     for dependency in requirements.get("dependencies", []):
         if not isinstance(dependency, dict):
             continue
@@ -1363,6 +1382,12 @@ def reconcile_fixed_source_ports(
         delivery = setting.get("delivery")
         if (
             isinstance(delivery, dict)
+            and delivery.get("kind") == "env"
+            and isinstance(delivery.get("key"), str)
+        ):
+            env_keys_to_remove.add(delivery["key"])
+        if (
+            isinstance(delivery, dict)
             and delivery.get("kind") == "sourceDefault"
             and delivery.get("value") == expected
         ):
@@ -1375,6 +1400,48 @@ def reconcile_fixed_source_ports(
                 "value": expected,
             }
         )
+    if env_keys_to_remove:
+        source = source_path.read_text()
+        lines = source.splitlines(keepends=True)
+
+        def block_end(start: int, limit: int) -> int | None:
+            depth = 0
+            for index in range(start, limit):
+                depth += lines[index].count("{") - lines[index].count("}")
+                if index > start and depth == 0:
+                    return index
+            return None
+
+        index = 0
+        removed = []
+        while index < len(lines):
+            if not re.match(r"^\s*env\s*:\s*\{", lines[index]):
+                index += 1
+                continue
+            env_end = block_end(index, len(lines))
+            if env_end is None:
+                break
+            cursor = index + 1
+            while cursor < env_end:
+                key_match = re.match(
+                    r"^\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?\s*:\s*\{",
+                    lines[cursor],
+                )
+                if not key_match or key_match.group(1) not in env_keys_to_remove:
+                    cursor += 1
+                    continue
+                entry_end = block_end(cursor, env_end + 1)
+                if entry_end is None:
+                    cursor += 1
+                    continue
+                removed.append(key_match.group(1))
+                del lines[cursor : entry_end + 1]
+                env_end -= entry_end - cursor + 1
+            index = env_end + 1
+        if removed:
+            source_path.write_text("".join(lines))
+            for key in sorted(set(removed)):
+                changes.append({"removedInventedEnv": key})
     if changes:
         write_json(requirements_path, requirements)
     return changes
