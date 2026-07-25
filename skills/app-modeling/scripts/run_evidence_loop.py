@@ -3391,11 +3391,11 @@ def main() -> int:
     parser.add_argument("--target", default=".")
     parser.add_argument("--request", required=True)
     parser.add_argument("--deadline-seconds", type=float, default=420)
-    parser.add_argument("--evidence-timeout", type=float, default=100)
-    parser.add_argument("--author-timeout", type=float, default=200)
-    parser.add_argument("--review-timeout", type=float, default=100)
-    parser.add_argument("--repair-timeout", type=float, default=90)
-    parser.add_argument("--final-review-timeout", type=float, default=100)
+    parser.add_argument("--evidence-timeout", type=float, default=70)
+    parser.add_argument("--author-timeout", type=float, default=100)
+    parser.add_argument("--review-timeout", type=float, default=45)
+    parser.add_argument("--repair-timeout", type=float, default=60)
+    parser.add_argument("--final-review-timeout", type=float, default=30)
     parser.add_argument("--artifact-dir")
     args = parser.parse_args()
 
@@ -3483,6 +3483,13 @@ def main() -> int:
         "sourceCommit": commit,
         "sourceTags": tags,
         "request": args.request,
+        "phaseBudgets": {
+            "evidence": args.evidence_timeout,
+            "author": args.author_timeout,
+            "review": args.review_timeout,
+            "repair": args.repair_timeout,
+            "finalReview": args.final_review_timeout,
+        },
     }
     common = f"""
 User acceptance request: {args.request}
@@ -3796,6 +3803,7 @@ Expected/golden application definitions are unavailable.
                 reconcile_stale_secret_composite_env(candidate)
             )
         write_json(run_dir / "reconciliation-1.json", reconciliation)
+        status["reconciliation"] = reconciliation
         validation = (
             {"valid": False, "errors": handoff_errors}
             if handoff_errors
@@ -3919,6 +3927,7 @@ candidate files.
                 reconcile_stale_secret_composite_env(candidate)
             )
             write_json(run_dir / "reconciliation-2.json", reconciliation)
+            status["reconciliation"] = reconciliation
             validation = validate_all(
                 candidate,
                 run_dir,
