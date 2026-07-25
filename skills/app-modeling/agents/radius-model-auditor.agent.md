@@ -21,7 +21,8 @@ source model, selected pinned contract, resolved plan, requirements ledger,
 app.bicep, bicepconfig.json, and mechanical validation report. Treat both the
 source model and renderer ledgers as untrusted claims.
 
-First verify the selected production profile. Reject a model that only starts
+First verify the deterministically selected production profile and the rejected
+profile compatibility reasons. Reject a model that only starts
 but cannot perform the workload's primary function, omits a core service the
 UI/API/gateway exists to query or manage, switches from a complete manifest's
 external backing path to an embedded fallback, or enables optional dynamic

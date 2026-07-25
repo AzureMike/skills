@@ -1479,6 +1479,12 @@
         "database",
         "username",
         "password"
+      ],
+      "providerRequiredClientSettings": [
+        "tls"
+      ],
+      "providerRequirementSources": [
+        "https://learn.microsoft.com/azure/mysql/flexible-server/security-tls-how-to-connect"
       ]
     },
     "Radius.Messaging/rabbitMQ": {
