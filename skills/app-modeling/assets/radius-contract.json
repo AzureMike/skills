@@ -1592,7 +1592,14 @@
         "sasl.mechanism=PLAIN",
         "jaas.username=$ConnectionString",
         "jaas.password=managedSecret:connectionString"
-      ]
+      ],
+      "runtimeComposite": {
+        "format": "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"<username>\" password=\"<password>\";",
+        "managedSecret": "connectionString",
+        "setting": "sasl.jaas.config",
+        "source": "https://learn.microsoft.com/azure/event-hubs/azure-event-hubs-apache-kafka-overview",
+        "username": "$ConnectionString"
+      }
     },
     "Radius.Storage/objectStorage": {
       "binding": {

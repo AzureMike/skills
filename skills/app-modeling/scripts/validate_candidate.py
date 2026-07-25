@@ -322,11 +322,16 @@ def validate_requirements(template, contract, requirements, errors):
     by_symbol = {resource["symbol"]: resource for resource in resources}
     env = {}
     runtime_text = ""
+    command_text = ""
     for resource in resources:
         if resource["type"] != "Radius.Compute/containers@2025-08-01-preview":
             continue
         for container in resource["properties"].get("containers", {}).values():
             env.update(container.get("env", {}))
+            command_text += "\n" + "\n".join(
+                str(item)
+                for item in (container.get("command") or []) + (container.get("args") or [])
+            )
             runtime_text += "\n" + json.dumps(
                 {
                     "command": container.get("command"),
@@ -397,6 +402,29 @@ def validate_requirements(template, contract, requirements, errors):
             name.split("=", 1)[0]: item for name, item in settings.items()
         }
         binding = profile.get("binding", {})
+        runtime_composite = profile.get("runtimeComposite")
+        for binding_name, transform in binding.items():
+            if not binding_name.endswith("Transform") or not isinstance(transform, str):
+                continue
+            placeholders = re.findall(r"<([A-Za-z][A-Za-z0-9]*)>", transform)
+            literal_parts = [
+                part
+                for part in re.split(r"<[A-Za-z][A-Za-z0-9]*>", transform)
+                if part
+            ]
+            rendered = runtime_text
+            if (
+                not placeholders
+                or f"reference('{symbol}')" not in rendered
+                or not all(part in rendered for part in literal_parts)
+            ):
+                error(
+                    errors,
+                    "REQUIREMENT_BINDING_TRANSFORM",
+                    f"$.requirements.dependencies.{symbol}.binding.{binding_name}",
+                    f"Runtime configuration must render the verified transform "
+                    f"{transform!r} from {qualified_type}.",
+                )
         port_literal = binding.get("portLiteral", binding.get("port"))
         if port_literal is not None and "port" in normalized_settings:
             port_delivery = normalized_settings["port"].get("delivery", {})
@@ -430,6 +458,16 @@ def validate_requirements(template, contract, requirements, errors):
 
             delivery = setting.get("delivery", {})
             kind = delivery.get("kind")
+            if required_value == "$ConnectionString" and kind != "runtimeConfig":
+                error(
+                    errors,
+                    "REQUIREMENT_COMPOSITE_DELIVERY",
+                    path,
+                    "A literal composite component must be rendered in the "
+                    "native runtime setting; it cannot be delivered as a "
+                    "standalone environment value or secret.",
+                )
+                continue
             if kind == "sourceDefault":
                 continue
             if kind == "runtimeConfig":
@@ -442,6 +480,18 @@ def validate_requirements(template, contract, requirements, errors):
                         "REQUIREMENT_RUNTIME_CONFIG",
                         path,
                         f"Rendered runtime configuration must contain {expected!r}.",
+                    )
+                if (
+                    required_value == "$ConnectionString"
+                    and r"\$ConnectionString" not in command_text
+                ):
+                    error(
+                        errors,
+                        "SHELL_LITERAL_CONNECTION_STRING",
+                        path,
+                        "The compiled runtime command must escape "
+                        "`$ConnectionString` so the shell preserves the literal "
+                        "Event Hubs username.",
                     )
                 continue
             key = delivery.get("key")
@@ -477,6 +527,21 @@ def validate_requirements(template, contract, requirements, errors):
                         path,
                         f"Recipe exposes Radius secret key {required_secret_key!r}, "
                         f"not {delivery.get('secretKey')!r}.",
+                    )
+                elif (
+                    isinstance(runtime_composite, dict)
+                    and runtime_composite.get("managedSecret") == required_secret_key
+                    and not re.search(
+                        rf"\$(?:\{{{re.escape(str(key))}\}}|{re.escape(str(key))}\b)",
+                        command_text,
+                    )
+                ):
+                    error(
+                        errors,
+                        "REQUIREMENT_COMPOSITE_SECRET",
+                        path,
+                        f"Runtime composite must expand secret environment "
+                        f"setting {key!r}.",
                     )
                 continue
             if kind == "literal":
@@ -518,6 +583,71 @@ def validate_requirements(template, contract, requirements, errors):
                     "REQUIREMENT_ENV",
                     path,
                     f"Expected {key}={expected!r}, got {actual.get('value')!r}.",
+                )
+
+        if isinstance(runtime_composite, dict):
+            composite_format = runtime_composite.get("format")
+            if isinstance(composite_format, str):
+                rendered_command = command_text.replace(r"\"", '"')
+                literal_parts = [
+                    part
+                    for part in re.split(r"<(?:username|password)>", composite_format)
+                    if part
+                ]
+                if not all(part in rendered_command for part in literal_parts):
+                    error(
+                        errors,
+                        "REQUIREMENT_COMPOSITE_FORMAT",
+                        f"$.requirements.dependencies.{symbol}.runtimeComposite",
+                        "Runtime configuration must preserve the verified "
+                        f"composite format {composite_format!r}.",
+                    )
+            composite_username = runtime_composite.get("username")
+            composite_secret = runtime_composite.get("managedSecret")
+            username_name = next(
+                (
+                    name
+                    for name, _, value in (
+                        item.partition("=") for item in required
+                    )
+                    if value == composite_username
+                ),
+                None,
+            )
+            password_name = next(
+                (
+                    name
+                    for name, _, value in (
+                        item.partition("=") for item in required
+                    )
+                    if value == f"managedSecret:{composite_secret}"
+                ),
+                None,
+            )
+            username_delivery = (settings.get(username_name) or {}).get(
+                "delivery", {}
+            )
+            password_delivery = (settings.get(password_name) or {}).get(
+                "delivery", {}
+            )
+            composite_key = username_delivery.get("key")
+            secret_key = password_delivery.get("key")
+            expected_fragments = (
+                f'export {composite_key}="',
+                f'username=\\"\\{composite_username}\\"',
+                f'password=\\"${secret_key}\\"',
+            )
+            if (
+                not composite_key
+                or not secret_key
+                or not all(fragment in command_text for fragment in expected_fragments)
+            ):
+                error(
+                    errors,
+                    "REQUIREMENT_COMPOSITE_SHELL",
+                    f"$.requirements.dependencies.{symbol}.runtimeComposite",
+                    "The compiled shell command must use canonical double-quoted "
+                    "runtime expansion for the verified composite.",
                 )
 
     for index, item in enumerate(requirements.get("persistentPaths", [])):

@@ -113,6 +113,15 @@ literally in the native client endpoint even if the URI scheme has the same
 default port. If source hardcodes that same port, record `sourceDefault` with
 the numeric value and emit no invented environment variable. Never create an
 environment or configuration key that the cited source does not consume.
+For every binding key ending in `Transform`, substitute the referenced Recipe
+output for each angle-bracket placeholder and preserve every literal prefix,
+suffix, scheme, delimiter, and port exactly. Never shorten a verified
+transform.
+When a protocol includes `runtimeComposite`, bind its managed secret to a
+non-native helper environment key, construct the exact native setting at
+runtime with `/bin/sh -c`, and `exec` the cited original process. Preserve a
+literal `$ConnectionString` as `\$ConnectionString` in the compiled shell
+command. Never deliver the raw managed secret under the native composite key.
 
 Every backing dependency needs complete app-native configuration plus a Radius
 connection. Set `disableDefaultEnvVars: true` unless source consumes the exact

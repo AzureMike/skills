@@ -24,6 +24,13 @@ invented environment/configuration keys absent from source, wrong Recipe
 outputs or exposed secret keys, insecure values, Bicep-composed credentials,
 shell `$${...}` PID expansion, missing persistence, and missing graph
 relationships. Compilation is necessary but not sufficient.
+For every contract binding key ending in `Transform`, require the candidate to
+preserve all literal text around the referenced Recipe output.
+For a shell-built composite, interpret the compiled shell rather than the
+Bicep escape spelling. An outer double-quoted assignment with `\"` around
+fields, `\$name` for a required literal dollar value, and `$SECRET_ENV` for the
+managed secret is balanced and expands only the secret; do not reject that
+canonical form as unmatched or single-quoted.
 Do not require a development implementation's server version, port, plaintext,
 or unauthenticated defaults when independent evidence cites exact client
 overrides compatible with the verified provider protocol. In that case audit

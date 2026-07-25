@@ -34,7 +34,9 @@ version, native setting names, parser/default behavior, endpoint composition,
 port, protocol, TLS/auth tuple, secret inputs, and citations. Use
 `facts.persistentPaths` only for paths mounted into an application workload
 whose data must survive replacement. Do not report a managed backing service's
-internal data directory; its Recipe owns provider persistence. Use
+internal data directory; its Recipe owns provider persistence. Give every
+retained path `required: true`; keep conditional or opt-in paths only in
+excluded-profile evidence. Use
 `facts.route.required: true` only when external ingress is part of the selected
 profile. Put these fields at the top of `facts`, not only inside a workload.
 When a dependency image version comes only from a development or test manifest,

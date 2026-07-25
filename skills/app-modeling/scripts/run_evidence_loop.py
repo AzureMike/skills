@@ -87,7 +87,20 @@ def source_selected_types(evidence: dict[str, Any]) -> set[str]:
             selected.add(qualified_type)
 
     persistent_paths = facts.get("persistentPaths")
-    if isinstance(persistent_paths, list) and persistent_paths:
+    if isinstance(persistent_paths, list) and any(
+        isinstance(item, str)
+        or (
+            isinstance(item, dict)
+            and (
+                item.get("required") is True
+                or (
+                    "required" not in item
+                    and not item.get("requiredWhen")
+                )
+            )
+        )
+        for item in persistent_paths
+    ):
         selected.add("Radius.Compute/persistentVolumes")
     route = facts.get("route")
     if isinstance(route, dict) and route.get("required") is True:
@@ -195,6 +208,76 @@ def build_authoring_contract(evidence: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_evidence_candidate(
+    candidate: Path,
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    source = (candidate / "app.bicep").read_text()
+    declarations = re.findall(
+        r"\bresource\s+([A-Za-z_][A-Za-z0-9_]*)\s+'([^']+)'",
+        source,
+    )
+    by_type: dict[str, list[str]] = {}
+    for symbol, resource_type in declarations:
+        by_type.setdefault(resource_type.split("@", 1)[0], []).append(symbol)
+
+    errors: list[dict[str, str]] = []
+    for qualified_type in sorted(source_selected_types(evidence)):
+        symbols = by_type.get(qualified_type, [])
+        if not symbols:
+            errors.append(
+                {
+                    "code": "SOURCE_SELECTED_TYPE",
+                    "path": "$.sourceFacts",
+                    "message": (
+                        f"Closed source facts require {qualified_type}, but the "
+                        "candidate does not emit that Radius type."
+                    ),
+                }
+            )
+            continue
+        if qualified_type.startswith(
+            ("Radius.Data/", "Radius.Messaging/", "Radius.AI/", "Radius.Storage/")
+        ):
+            for symbol in symbols:
+                if not re.search(
+                    rf"\bsource\s*:\s*{re.escape(symbol)}\.id\b",
+                    source,
+                ):
+                    errors.append(
+                        {
+                            "code": "SOURCE_DEPENDENCY_CONNECTION",
+                            "path": f"$.resources.{symbol}",
+                            "message": (
+                                f"Source-selected dependency {symbol!r} is not "
+                                "connected to an application workload."
+                            ),
+                        }
+                    )
+    return errors
+
+
+def validate_all(
+    candidate: Path,
+    run_dir: Path,
+    evidence: dict[str, Any],
+    *,
+    remote: str,
+    commit: str,
+    source_path: str,
+) -> dict[str, Any]:
+    report = validate_candidate(
+        candidate,
+        run_dir,
+        source_remote=remote,
+        source_commit=commit,
+        source_path=source_path,
+    )
+    report["errors"].extend(validate_evidence_candidate(candidate, evidence))
+    report["valid"] = not report["errors"]
+    return report
+
+
 def normalize_review(value: dict[str, Any]) -> dict[str, Any]:
     if "verdict" in value:
         verdict = str(value.get("verdict", "")).lower()
@@ -254,14 +337,47 @@ def normalize_evidence(value: dict[str, Any]) -> dict[str, Any]:
         value["blockers"] = []
     facts = value.get("facts")
     if isinstance(facts, dict):
+        if not isinstance(facts.get("workloads"), list):
+            workload = facts.get("workload")
+            application = facts.get("application")
+            if isinstance(workload, dict):
+                facts["workloads"] = [workload]
+            elif isinstance(application, dict):
+                facts["workloads"] = [application]
+        if not isinstance(facts.get("dependencies"), list):
+            dependencies = []
+            dependency = facts.get("dependency")
+            if isinstance(dependency, dict):
+                dependencies.append(dependency)
+            for alias in ("database", "broker", "cache", "storage", "model", "search"):
+                item = facts.get(alias)
+                if isinstance(item, dict) and item.get("kind"):
+                    dependencies.append(item)
+            if dependencies:
+                facts["dependencies"] = dependencies
+        if not isinstance(facts.get("route"), dict):
+            application = facts.get("application")
+            if isinstance(application, dict) and isinstance(
+                application.get("route"), dict
+            ):
+                facts["route"] = application["route"]
         dependencies = facts.get("dependencies")
         if isinstance(dependencies, list):
             for dependency in dependencies:
-                if not isinstance(dependency, dict) or dependency.get("kind"):
+                if not isinstance(dependency, dict):
                     continue
-                candidate = str(dependency.get("type", "")).strip().lower()
+                candidate = str(
+                    dependency.get("kind", dependency.get("type", ""))
+                ).strip().lower()
                 if candidate in DEPENDENCY_AUTHORING_TYPES:
                     dependency["kind"] = candidate
+                if (
+                    not dependency.get("versionScope")
+                    and "development" in str(
+                        dependency.get("versionEvidence", "")
+                    ).lower()
+                ):
+                    dependency["versionScope"] = "developmentImplementation"
         blockers = value.get("blockers")
         if isinstance(blockers, list) and source_selected_types(value):
             retained = []
@@ -306,6 +422,10 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
         errors.append("invalid or missing evidence status")
     if not isinstance(value.get("facts"), dict):
         errors.append("evidence facts must be an object")
+    else:
+        facts = value["facts"]
+        if not isinstance(facts.get("workloads"), list) or not facts["workloads"]:
+            errors.append("facts.workloads must contain the selected workloads")
     if not isinstance(value.get("blockers"), list):
         errors.append("evidence blockers must be an array")
     return errors
@@ -314,6 +434,26 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
 def reconcile_requirements(
     candidate: Path, authoring_contract: dict[str, Any]
 ) -> dict[str, Any]:
+    aliases = {
+        "host": {"host", "hostname"},
+        "port": {"port"},
+        "database": {"database", "db"},
+        "username": {"username", "user"},
+        "password": {"password", "passwd", "pwd"},
+        "endpoint": {"endpoint", "url", "uri"},
+        "apikey": {"apikey", "key"},
+        "accountname": {"accountname", "account"},
+        "container": {"container", "bucket"},
+    }
+
+    def tokens(value: Any) -> set[str]:
+        text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value))
+        return {
+            item
+            for item in re.split(r"[^A-Za-z0-9]+", text.lower())
+            if item
+        }
+
     requirements_path = candidate / "requirements.json"
     app_path = candidate / "app.bicep"
     requirements = json.loads(requirements_path.read_text())
@@ -333,6 +473,7 @@ def reconcile_requirements(
         qualified_type = resource_types.get(resource_symbol)
         bundle = authoring_contract.get("bundles", {}).get(qualified_type, {})
         protocol = bundle.get("protocol") or {}
+        binding = protocol.get("binding") or {}
         required_settings = [
             setting.partition("=")
             for setting in (
@@ -340,24 +481,95 @@ def reconcile_requirements(
                 + protocol.get("runtimeRequiredClientSettings", [])
             )
         ]
+        required_names = {name for name, _, _ in required_settings}
         for setting in dependency.get("settings", []):
             if not isinstance(setting, dict):
                 continue
             name = setting.get("name")
-            if not isinstance(name, str) or "*" not in name:
+            if not isinstance(name, str):
                 continue
-            pattern = "^" + re.sub(r"(?:\\\*)+", ".+", re.escape(name)) + "$"
-            matches = []
             delivery_kind = (setting.get("delivery") or {}).get("kind")
-            for required_name, _, required_value in required_settings:
-                if not re.fullmatch(pattern, required_name):
+            delivery = setting.get("delivery") or {}
+            if name in required_names:
+                required_value = next(
+                    value
+                    for required_name, _, value in required_settings
+                    if required_name == name
+                )
+                if (
+                    required_value == ""
+                    and delivery_kind == "runtimeConfig"
+                    and delivery.get("key")
+                ):
+                    delivery["kind"] = "env"
+                    delivery_kind = "env"
+                    changes.append(
+                        {
+                            "resourceSymbol": resource_symbol,
+                            "setting": name,
+                            "fromKind": "runtimeConfig",
+                            "toKind": "env",
+                        }
+                    )
+                if (
+                    required_value == ""
+                    and delivery_kind == "env"
+                    and "value" in delivery
+                ):
+                    removed = delivery.pop("value")
+                    changes.append(
+                        {
+                            "resourceSymbol": resource_symbol,
+                            "setting": name,
+                            "removedDynamicValue": removed,
+                        }
+                    )
+                continue
+            matches = []
+            if "*" in name:
+                pattern = "^" + re.sub(r"(?:\\\*)+", ".+", re.escape(name)) + "$"
+                for required_name, _, required_value in required_settings:
+                    if not re.fullmatch(pattern, required_name):
+                        continue
+                    is_managed_secret = required_value.startswith("managedSecret:")
+                    if delivery_kind == "secretKeyRef" and not is_managed_secret:
+                        continue
+                    if delivery_kind != "secretKeyRef" and is_managed_secret:
+                        continue
+                    matches.append(required_name)
+            setting_tokens = tokens(delivery.get("key", name))
+            port_literal = binding.get("portLiteral", binding.get("port"))
+            if (
+                "port" in required_names
+                and delivery_kind == "sourceDefault"
+                and port_literal is not None
+                and str(delivery.get("value")) == str(port_literal)
+            ):
+                matches.append("port")
+            for binding_name, target in binding.items():
+                if not binding_name.endswith(("Input", "Property", "Secret")):
                     continue
-                is_secret = required_value.startswith("managedSecret:")
-                if delivery_kind == "secretKeyRef" and not is_secret:
+                target_name = str(target)
+                normalized_target = re.sub(r"[^a-z0-9]", "", target_name.lower())
+                if target_name not in required_names:
                     continue
-                if delivery_kind != "secretKeyRef" and is_secret:
-                    continue
-                matches.append(required_name)
+                target_aliases = aliases.get(normalized_target, {target_name.lower()})
+                if setting_tokens & target_aliases:
+                    matches.append(target_name)
+            if delivery_kind == "secretKeyRef":
+                secret_candidates = [
+                    required_name
+                    for required_name, _, required_value in required_settings
+                    if required_value.startswith("managedSecret:")
+                    or re.search(
+                        r"(?:password|secret|key)$",
+                        required_name,
+                        re.IGNORECASE,
+                    )
+                ]
+                if len(secret_candidates) == 1:
+                    matches.extend(secret_candidates)
+            matches = sorted(set(matches))
             if len(matches) == 1:
                 setting["name"] = matches[0]
                 changes.append(
@@ -365,6 +577,43 @@ def reconcile_requirements(
                         "resourceSymbol": resource_symbol,
                         "from": name,
                         "to": matches[0],
+                    }
+                )
+            resolved_name = setting.get("name")
+            required_value = next(
+                (
+                    value
+                    for required_name, _, value in required_settings
+                    if required_name == resolved_name
+                ),
+                None,
+            )
+            if (
+                required_value == ""
+                and delivery_kind == "runtimeConfig"
+                and delivery.get("key")
+            ):
+                delivery["kind"] = "env"
+                delivery_kind = "env"
+                changes.append(
+                    {
+                        "resourceSymbol": resource_symbol,
+                        "setting": str(resolved_name),
+                        "fromKind": "runtimeConfig",
+                        "toKind": "env",
+                    }
+                )
+            if (
+                required_value == ""
+                and delivery_kind == "env"
+                and "value" in delivery
+            ):
+                removed = delivery.pop("value")
+                changes.append(
+                    {
+                        "resourceSymbol": resource_symbol,
+                        "setting": str(resolved_name),
+                        "removedDynamicValue": removed,
                     }
                 )
     if changes:
@@ -394,16 +643,419 @@ def reconcile_requirements(
     }
 
 
+def remove_resource_property(
+    source: str,
+    *,
+    qualified_type: str,
+    property_name: str,
+) -> tuple[str, bool]:
+    lines = source.splitlines(keepends=True)
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.search(
+                rf"\bresource\s+[A-Za-z_][A-Za-z0-9_]*\s+'"
+                rf"{re.escape(qualified_type)}@[^']+'\s*=\s*\{{",
+                line,
+            )
+        ),
+        None,
+    )
+    if start is None:
+        return source, False
+    depth = 0
+    end = None
+    for index in range(start, len(lines)):
+        depth += lines[index].count("{") - lines[index].count("}")
+        if index > start and depth == 0:
+            end = index
+            break
+    if end is None:
+        return source, False
+    property_index = next(
+        (
+            index
+            for index in range(start + 1, end)
+            if re.match(
+                rf"^\s+{re.escape(property_name)}\s*:",
+                lines[index],
+            )
+        ),
+        None,
+    )
+    if property_index is None:
+        return source, False
+    del lines[property_index]
+    return "".join(lines), True
+
+
+def reconcile_optional_versions(
+    candidate: Path,
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    facts = evidence.get("facts") if isinstance(evidence, dict) else None
+    if not isinstance(facts, dict):
+        return []
+    dependencies = facts.get("dependencies")
+    if not isinstance(dependencies, list):
+        return []
+    source_path = candidate / "app.bicep"
+    source = source_path.read_text()
+    changes: list[dict[str, str]] = []
+    for dependency in dependencies:
+        if (
+            not isinstance(dependency, dict)
+            or dependency.get("versionScope") != "developmentImplementation"
+        ):
+            continue
+        qualified_type = DEPENDENCY_AUTHORING_TYPES.get(
+            str(dependency.get("kind", "")).lower()
+        )
+        if not qualified_type:
+            continue
+        source, removed = remove_resource_property(
+            source,
+            qualified_type=qualified_type,
+            property_name="version",
+        )
+        if removed:
+            changes.append(
+                {
+                    "resourceType": qualified_type,
+                    "property": "version",
+                }
+            )
+    if changes:
+        source_path.write_text(source)
+    return changes
+
+
+def reconcile_bicep_expressions(candidate: Path) -> list[dict[str, str]]:
+    source_path = candidate / "app.bicep"
+    source = source_path.read_text()
+    pattern = re.compile(
+        r"(?m)^(\s*value\s*:\s*)'\$\{"
+        r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)"
+        r"\}'(\s*)$"
+    )
+    changes: list[dict[str, str]] = []
+
+    def replace(match: re.Match[str]) -> str:
+        changes.append(
+            {
+                "from": f"'${{{match.group(2)}}}'",
+                "to": match.group(2),
+            }
+        )
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}"
+
+    rewritten = pattern.sub(replace, source)
+    if changes:
+        source_path.write_text(rewritten)
+    return changes
+
+
+def upper_snake(value: str) -> str:
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", value)
+    return re.sub(r"[^A-Za-z0-9]+", "_", separated).strip("_").upper()
+
+
+def evidence_process(evidence: dict[str, Any]) -> str | None:
+    def find(value: Any) -> str | None:
+        if isinstance(value, dict):
+            process = value.get("process")
+            if isinstance(process, str) and process.strip():
+                return process.strip()
+            if isinstance(process, dict):
+                command = process.get("command")
+                if isinstance(command, str) and command.strip():
+                    return command.strip()
+            for item in value.values():
+                found = find(item)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = find(item)
+                if found:
+                    return found
+        return None
+
+    found = find(evidence)
+    if found:
+        return found
+    return None
+
+
+def bicep_single_quoted(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def insert_runtime_command(
+    source: str,
+    *,
+    composite_key: str,
+    secret_key: str,
+    command: str,
+) -> str | None:
+    key_pattern = re.compile(
+        rf"(?m)^(\s*){re.escape(composite_key)}(\s*:\s*\{{\s*)$"
+    )
+    match = key_pattern.search(source)
+    if match:
+        renamed = source[: match.start()] + (
+            f"{match.group(1)}{secret_key}{match.group(2)}"
+        ) + source[match.end() :]
+    elif re.search(
+        rf"(?m)^\s*{re.escape(secret_key)}\s*:\s*\{{\s*$",
+        source,
+    ):
+        renamed = source
+    else:
+        return None
+    lines = renamed.splitlines(keepends=True)
+    secret_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.match(rf"^\s*{re.escape(secret_key)}\s*:\s*\{{\s*$", line)
+        ),
+        None,
+    )
+    if secret_index is None:
+        return None
+    env_index = next(
+        (
+            index
+            for index in range(secret_index - 1, -1, -1)
+            if re.match(r"^\s*env\s*:\s*\{\s*$", lines[index])
+        ),
+        None,
+    )
+    if env_index is None:
+        return None
+    env_indent = re.match(r"^(\s*)", lines[env_index]).group(1)
+    container_indent = env_indent[:-2] if len(env_indent) >= 2 else ""
+    container_index = next(
+        (
+            index
+            for index in range(env_index - 1, -1, -1)
+            if re.match(
+                rf"^{re.escape(container_indent)}[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\{{\s*$",
+                lines[index],
+            )
+        ),
+        None,
+    )
+    if container_index is None:
+        return None
+    ranges: list[tuple[int, int]] = []
+    index = container_index + 1
+    property_pattern = re.compile(
+        rf"^{re.escape(env_indent)}(?:command|args)\s*:\s*\["
+    )
+    while index < env_index:
+        if not property_pattern.match(lines[index]):
+            index += 1
+            continue
+        depth = 0
+        end = index
+        while end < env_index:
+            depth += lines[end].count("[") - lines[end].count("]")
+            if depth == 0:
+                break
+            end += 1
+        if depth != 0:
+            return None
+        ranges.append((index, end + 1))
+        index = end + 1
+    for start, end in reversed(ranges):
+        del lines[start:end]
+    secret_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.match(rf"^\s*{re.escape(secret_key)}\s*:\s*\{{\s*$", line)
+        ),
+        None,
+    )
+    if secret_index is None:
+        return None
+    env_index = next(
+        (
+            index
+            for index in range(secret_index - 1, -1, -1)
+            if re.match(r"^\s*env\s*:\s*\{\s*$", lines[index])
+        ),
+        None,
+    )
+    if env_index is None:
+        return None
+    encoded = bicep_single_quoted(command)
+    block = (
+        f"{env_indent}command: [\n"
+        f"{env_indent}  '/bin/sh'\n"
+        f"{env_indent}  '-c'\n"
+        f"{env_indent}]\n"
+        f"{env_indent}args: [\n"
+        f"{env_indent}  '{encoded}'\n"
+        f"{env_indent}]\n"
+    )
+    lines.insert(env_index, block)
+    return "".join(lines)
+
+
+def reconcile_runtime_composites(
+    candidate: Path,
+    authoring_contract: dict[str, Any],
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    requirements_path = candidate / "requirements.json"
+    source_path = candidate / "app.bicep"
+    requirements = json.loads(requirements_path.read_text())
+    source = source_path.read_text()
+    process = evidence_process(evidence)
+    if not process:
+        return []
+    resource_types = {
+        symbol: resource_type.split("@", 1)[0]
+        for symbol, resource_type in re.findall(
+            r"\bresource\s+([A-Za-z_][A-Za-z0-9_]*)\s+'([^']+)'",
+            source,
+        )
+    }
+    changes: list[dict[str, str]] = []
+    for dependency in requirements.get("dependencies", []):
+        if not isinstance(dependency, dict):
+            continue
+        symbol = dependency.get("resourceSymbol")
+        qualified_type = resource_types.get(symbol)
+        protocol = (
+            authoring_contract.get("bundles", {})
+            .get(qualified_type, {})
+            .get("protocol")
+            or {}
+        )
+        composite = protocol.get("runtimeComposite")
+        if not isinstance(composite, dict):
+            continue
+        username = composite.get("username")
+        managed_secret = composite.get("managedSecret")
+        template = composite.get("format")
+        if not all(isinstance(item, str) and item for item in (
+            username,
+            managed_secret,
+            template,
+        )):
+            continue
+        required = [
+            item.partition("=")
+            for item in protocol.get("requiredClientSettings", [])
+        ]
+        username_name = next(
+            (name for name, _, value in required if value == username),
+            None,
+        )
+        secret_name = next(
+            (
+                name
+                for name, _, value in required
+                if value == f"managedSecret:{managed_secret}"
+            ),
+            None,
+        )
+        settings = {
+            item.get("name"): item
+            for item in dependency.get("settings", [])
+            if isinstance(item, dict)
+        }
+        username_setting = settings.get(username_name)
+        secret_setting = settings.get(secret_name)
+        if not isinstance(username_setting, dict) or not isinstance(
+            secret_setting, dict
+        ):
+            continue
+        username_delivery = username_setting.get("delivery") or {}
+        secret_delivery = secret_setting.get("delivery") or {}
+        exported_setting = re.search(
+            r"\bexport\s+([A-Z][A-Z0-9_]+)\s*=",
+            source,
+        )
+        composite_key = (
+            username_delivery.get("key")
+            or (exported_setting.group(1) if exported_setting else None)
+            or secret_delivery.get("key")
+        )
+        if not isinstance(composite_key, str) or not composite_key:
+            continue
+        existing_secret_env = secret_delivery.get("key")
+        secret_env = (
+            existing_secret_env
+            if isinstance(existing_secret_env, str)
+            and existing_secret_env
+            and existing_secret_env != composite_key
+            else f"RADIUS_{upper_snake(str(symbol))}_{upper_snake(managed_secret)}"
+        )
+        runtime_value = (
+            template.replace("<username>", username)
+            .replace("<password>", f"${secret_env}")
+            .replace('"', '\\"')
+            .replace(username, f"\\{username}")
+        )
+        shell_command = (
+            f'export {composite_key}="{runtime_value}"; exec {process}'
+        )
+        rewritten = insert_runtime_command(
+            source,
+            composite_key=composite_key,
+            secret_key=secret_env,
+            command=shell_command,
+        )
+        if rewritten is None:
+            continue
+        source = rewritten
+        username_setting["delivery"] = {
+            "kind": "runtimeConfig",
+            "key": composite_key,
+            "value": username,
+        }
+        secret_setting["delivery"] = {
+            "kind": "secretKeyRef",
+            "key": secret_env,
+            "secretKey": managed_secret,
+        }
+        secret_environment = [
+            item
+            for item in requirements.get("secretEnvironment", [])
+            if isinstance(item, dict)
+            and item.get("key") not in {composite_key, secret_env}
+        ]
+        secret_environment.append({"key": secret_env})
+        requirements["secretEnvironment"] = secret_environment
+        changes.append(
+            {
+                "resourceSymbol": str(symbol),
+                "setting": str(composite.get("setting")),
+                "secretEnvironment": secret_env,
+            }
+        )
+    if changes:
+        source_path.write_text(source)
+        write_json(requirements_path, requirements)
+    return changes
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default=".")
     parser.add_argument("--request", required=True)
-    parser.add_argument("--deadline-seconds", type=float, default=330)
-    parser.add_argument("--evidence-timeout", type=float, default=195)
-    parser.add_argument("--author-timeout", type=float, default=135)
-    parser.add_argument("--review-timeout", type=float, default=45)
-    parser.add_argument("--repair-timeout", type=float, default=40)
-    parser.add_argument("--final-review-timeout", type=float, default=45)
+    parser.add_argument("--deadline-seconds", type=float, default=360)
+    parser.add_argument("--evidence-timeout", type=float, default=100)
+    parser.add_argument("--author-timeout", type=float, default=95)
+    parser.add_argument("--review-timeout", type=float, default=40)
+    parser.add_argument("--repair-timeout", type=float, default=55)
+    parser.add_argument("--final-review-timeout", type=float, default=40)
     parser.add_argument("--artifact-dir")
     args = parser.parse_args()
 
@@ -436,6 +1088,12 @@ def main() -> int:
         capture_output=True,
         check=False,
     ).stdout.strip()
+    tags = subprocess.run(
+        ["git", "-C", str(target), "tag", "--points-at", commit],
+        text=True,
+        capture_output=True,
+        check=False,
+    ).stdout.splitlines()
     if args.artifact_dir:
         run_dir = Path(args.artifact_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -467,6 +1125,7 @@ Git repository root: {repository_root}
 Application path within remote: {source_path}
 Remote: {remote}
 Immutable source revision: {commit}
+Exact Git tags at revision: {json.dumps(tags)}
 Skill directory: {SKILL_DIR}
 Contract query: {SKILL_DIR / 'scripts' / 'contract_query.py'}
 Verified contract: {SKILL_DIR / 'assets' / 'radius-contract.json'}
@@ -506,20 +1165,38 @@ Expected/golden application definitions are unavailable.
         except ValueError as exc:
             evidence = {}
             evidence_errors = [str(exc)]
-        if evidence_errors:
+        evidence_blocked = evidence.get("status") in {
+            "blocked",
+            "needs_more_info",
+            "conflict",
+        }
+        if evidence_errors or evidence_blocked:
+            if evidence_errors:
+                retry_prompt = (
+                    "Your evidence JSON was malformed or incomplete: "
+                    + "; ".join(evidence_errors)
+                    + ". Do not use tools. Restate the completed evidence as one "
+                    "compact valid JSON object with status, blockers, and facts "
+                    "containing workloads, dependencies, route, and "
+                    "persistentPaths. Preserve all already closed citations."
+                )
+            else:
+                retry_prompt = (
+                    "Recheck the reported source blockers once using only the "
+                    "already inspected evidence and the exact Git tags supplied "
+                    "in the original prompt. Contract selection is not a source "
+                    "blocker. Preserve genuine packaging or runtime blockers; "
+                    "otherwise return the closed profile as one compact JSON "
+                    "object with status, facts, and blockers. Do not use tools."
+                )
             evidence_retry = invoke(
                 target=target,
                 run_dir=run_dir,
                 label="reviewer-evidence-retry",
                 agent="radius-model-reviewer",
                 session_id=reviewer_session,
-                prompt=(
-                    "Your evidence JSON was malformed or incomplete: "
-                    + "; ".join(evidence_errors)
-                    + ". Do not use tools. Restate the completed evidence as one "
-                    "compact valid JSON object with status, facts, and blockers."
-                ),
-                timeout=min(35, remaining(deadline)),
+                prompt=retry_prompt,
+                timeout=min(25, remaining(deadline)),
                 resume=True,
                 effort="low",
             )
@@ -598,19 +1275,40 @@ Expected/golden application definitions are unavailable.
         handoff_errors = validate_handoff(candidate)
         shutil.copytree(candidate, run_dir / "candidate-initial")
         reconciliation = (
-            {"requirementChanges": [], "bicepConfigChanges": []}
+            {
+                "requirementChanges": [],
+                "bicepConfigChanges": [],
+                "runtimeCompositeChanges": [],
+                "optionalVersionChanges": [],
+                "bicepExpressionChanges": [],
+            }
             if handoff_errors
             else reconcile_requirements(candidate, authoring_contract)
         )
+        if not handoff_errors:
+            reconciliation["optionalVersionChanges"] = (
+                reconcile_optional_versions(candidate, evidence)
+            )
+            reconciliation["bicepExpressionChanges"] = (
+                reconcile_bicep_expressions(candidate)
+            )
+            reconciliation["runtimeCompositeChanges"] = (
+                reconcile_runtime_composites(
+                    candidate,
+                    authoring_contract,
+                    evidence,
+                )
+            )
         write_json(run_dir / "reconciliation-1.json", reconciliation)
         validation = (
             {"valid": False, "errors": handoff_errors}
             if handoff_errors
-            else validate_candidate(
+            else validate_all(
                 candidate,
                 run_dir,
-                source_remote=remote,
-                source_commit=commit,
+                evidence,
+                remote=remote,
+                commit=commit,
                 source_path=source_path,
             )
         )
@@ -705,12 +1403,26 @@ or rescan the repository.
                 return 1
             shutil.copytree(candidate, run_dir / "candidate-repaired")
             reconciliation = reconcile_requirements(candidate, authoring_contract)
+            reconciliation["optionalVersionChanges"] = (
+                reconcile_optional_versions(candidate, evidence)
+            )
+            reconciliation["bicepExpressionChanges"] = (
+                reconcile_bicep_expressions(candidate)
+            )
+            reconciliation["runtimeCompositeChanges"] = (
+                reconcile_runtime_composites(
+                    candidate,
+                    authoring_contract,
+                    evidence,
+                )
+            )
             write_json(run_dir / "reconciliation-2.json", reconciliation)
-            validation = validate_candidate(
+            validation = validate_all(
                 candidate,
                 run_dir,
-                source_remote=remote,
-                source_commit=commit,
+                evidence,
+                remote=remote,
+                commit=commit,
                 source_path=source_path,
             )
             write_json(run_dir / "validation-2.json", validation)
