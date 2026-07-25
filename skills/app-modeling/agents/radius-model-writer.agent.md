@@ -92,9 +92,13 @@ the evidence explicitly proves `presentInImage: true`. Generate a
 `runtimeGenerated` file from its cited complete source content before exec. For
 `operatorConfig`, declare an `@secure()` configuration parameter, store it in
 an authored `Radius.Security/secrets` resource, bind a non-native helper
-environment variable with `secretKeyRef`, write it to the cited path, then exec
-the exact selected process. Never silently use an image default that references
-a missing file, and never invent configuration content or an optional adapter.
+environment variable with `secretKeyRef`, write it to `materializedPath`, then
+exec the selected process with only its source-supported config-file argument
+changed from `path` to `materializedPath`. The materialized path must be inside
+a directory independently proven writable by the effective runtime user. Use
+restrictive file permissions for the materialized secret content.
+Never silently use an image default that references a missing file, and never
+invent configuration content or an optional adapter.
 Build context is relative to the Git remote root, not merely the supplied
 application directory. Prefix a source-relative context with the supplied
 `Application path within remote`; for example application `samples/demo` plus

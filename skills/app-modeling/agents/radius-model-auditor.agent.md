@@ -28,7 +28,11 @@ For each independent `startupFiles` fact, reject the candidate unless the
 cited immutable image contains the path or the candidate creates it before
 executing the selected process. Reject operator-defined configuration unless
 it is supplied by a secure parameter through an authored secret and
-`secretKeyRef`. Do not treat a bundled default, smoke, stdin/stdout, or example
+`secretKeyRef`. Require its `materializedPath` to be under an independently
+cited directory writable by the effective runtime user. When it differs from
+the source path, accept only substitution of the source-supported config-file
+argument and require restrictive file permissions; reject any other process
+change. Do not treat a bundled default, smoke, stdin/stdout, or example
 configuration as a selected production profile; never accept an invented
 adapter or configuration body.
 For every contract binding key ending in `Transform`, require the candidate to

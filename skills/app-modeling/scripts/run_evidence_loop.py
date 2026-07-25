@@ -500,6 +500,85 @@ def reconcile_startup_file_delivery(
     return changes
 
 
+def workload_facts(
+    evidence: dict[str, Any],
+    name: str,
+) -> dict[str, Any] | None:
+    facts = evidence.get("facts")
+    workloads = facts.get("workloads", []) if isinstance(facts, dict) else []
+    matching = [
+        item
+        for item in workloads
+        if isinstance(item, dict)
+        and name
+        in {
+            str(item.get("name", "")),
+            str(item.get("workload", "")),
+            str(item.get("service", "")),
+        }
+    ]
+    if matching:
+        return matching[0]
+    eligible = [item for item in workloads if isinstance(item, dict)]
+    return eligible[0] if len(eligible) == 1 else None
+
+
+def writable_directories(workload: dict[str, Any] | None) -> list[str]:
+    values = workload.get("writablePaths", []) if isinstance(workload, dict) else []
+    directories: list[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if (
+            isinstance(path, str)
+            and path.startswith("/")
+            and item.get("kind") == "directory"
+            and isinstance(item.get("writableBy"), str)
+            and item["writableBy"].strip()
+            and isinstance(item.get("citation"), str)
+            and item["citation"].strip()
+        ):
+            directories.append(path.rstrip("/") or "/")
+    return directories
+
+
+def path_is_within(path: str, directory: str) -> bool:
+    return path == directory or path.startswith(directory.rstrip("/") + "/")
+
+
+def reconcile_operator_materialized_paths(
+    evidence: dict[str, Any],
+) -> list[dict[str, str]]:
+    facts = evidence.get("facts")
+    startup_files = facts.get("startupFiles", []) if isinstance(facts, dict) else []
+    changes: list[dict[str, str]] = []
+    for item in startup_files:
+        if not isinstance(item, dict) or item.get("delivery") != "operatorConfig":
+            continue
+        path = item.get("path")
+        workload_name = item.get("workload")
+        if not isinstance(path, str) or not isinstance(workload_name, str):
+            continue
+        directories = writable_directories(workload_facts(evidence, workload_name))
+        if any(path_is_within(path, directory) for directory in directories):
+            item["materializedPath"] = path
+            continue
+        directory = next((value for value in directories if value != "/"), None)
+        if directory is None:
+            continue
+        materialized_path = f"{directory}/{Path(path).name}"
+        item["materializedPath"] = materialized_path
+        changes.append(
+            {
+                "workload": workload_name,
+                "sourcePath": path,
+                "materializedPath": materialized_path,
+            }
+        )
+    return changes
+
+
 def candidate_provisions_path(source: str, path: str) -> bool:
     quoted_path = rf"['\"]?{re.escape(path)}['\"]?"
     patterns = (
@@ -528,11 +607,21 @@ def validate_startup_input_closure(
     for index, item in enumerate(startup_files):
         if not isinstance(item, dict) or item.get("required") is False:
             continue
-        path = item.get("path")
+        source_startup_path = item.get("path")
+        if (
+            not isinstance(source_startup_path, str)
+            or not source_startup_path.startswith("/")
+        ):
+            continue
+        delivery = str(item.get("delivery", "")).strip()
+        path = (
+            item.get("materializedPath", source_startup_path)
+            if delivery == "operatorConfig"
+            else source_startup_path
+        )
         if not isinstance(path, str) or not path.startswith("/"):
             continue
         required_paths.add(path)
-        delivery = str(item.get("delivery", "")).strip()
         if delivery == "image" and item.get("presentInImage") is True:
             if source_root is not None and (
                 image_provides_startup_file(
@@ -553,13 +642,32 @@ def validate_startup_input_closure(
                     "code": "STARTUP_IMAGE_PROOF",
                     "path": f"$.sourceFacts.startupFiles[{index}]",
                     "message": (
-                        f"Independent evidence claims {path} is image-provided, "
+                        f"Independent evidence claims {source_startup_path} is "
+                        "image-provided, "
                         "but the selected Dockerfile and production-content "
                         "citations do not prove that claim."
                     ),
                 }
             )
             continue
+        if delivery == "operatorConfig":
+            workload_name = str(item.get("workload", ""))
+            directories = writable_directories(
+                workload_facts(evidence, workload_name)
+            )
+            if not any(path_is_within(path, directory) for directory in directories):
+                errors.append(
+                    {
+                        "code": "STARTUP_INPUT_WRITABILITY",
+                        "path": f"$.sourceFacts.startupFiles[{index}]",
+                        "message": (
+                            f"Operator configuration cannot be materialized at {path}; "
+                            "independent evidence does not prove it writable by the "
+                            "selected runtime user."
+                        ),
+                    }
+                )
+                continue
         if not candidate_provisions_path(source, path):
             errors.append(
                 {
@@ -925,8 +1033,26 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
         errors.append("evidence facts must be an object")
     else:
         facts = value["facts"]
-        if not isinstance(facts.get("workloads"), list) or not facts["workloads"]:
+        workloads = facts.get("workloads")
+        if not isinstance(workloads, list) or not workloads:
             errors.append("facts.workloads must contain the selected workloads")
+        else:
+            for index, workload in enumerate(workloads):
+                if not isinstance(workload, dict):
+                    errors.append(f"facts.workloads[{index}] must be an object")
+                    continue
+                name = str(
+                    workload.get(
+                        "name",
+                        workload.get("workload", workload.get("service", "")),
+                    )
+                )
+                scoped = {"facts": {"workloads": [workload]}}
+                if not evidence_process(scoped, name or None):
+                    errors.append(
+                        f"facts.workloads[{index}].process must be a shell "
+                        "command, argv, or command/args object"
+                    )
         startup_files = facts.get("startupFiles")
         if not isinstance(startup_files, list):
             errors.append(
@@ -969,6 +1095,24 @@ def validate_evidence(value: dict[str, Any]) -> list[str]:
                     errors.append(
                         f"facts.startupFiles[{index}] lacks image-presence proof"
                     )
+                needs_operator_directory = (
+                    item.get("delivery") == "operatorConfig"
+                    or (
+                        item.get("delivery") == "image"
+                        and item.get("profileSelectedBy")
+                        not in {"request", "canonicalProduction"}
+                    )
+                )
+                if needs_operator_directory:
+                    workload = workload_facts(
+                        value,
+                        str(item.get("workload", "")),
+                    )
+                    if not writable_directories(workload):
+                        errors.append(
+                            f"facts.workloads for startupFiles[{index}] must cite "
+                            "at least one directory writable by the runtime user"
+                        )
     if not isinstance(value.get("blockers"), list):
         errors.append("evidence blockers must be an array")
     return errors
@@ -1645,13 +1789,21 @@ def evidence_process(
     workload: str | None = None,
 ) -> str | None:
     def normalize(value: Any) -> str | None:
-        if isinstance(value, str):
-            return value.strip() or None
+        direct = shell_process(value)
+        if direct:
+            return direct
         if not isinstance(value, dict):
             return None
-        command = shell_process(value.get("command"))
-        args = shell_process(value.get("args"))
-        return " ".join(item for item in (command, args) if item) or None
+        for command_key, args_key in (
+            ("command", "args"),
+            ("entrypoint", "cmd"),
+        ):
+            command = shell_process(value.get(command_key))
+            args = shell_process(value.get(args_key))
+            process = " ".join(item for item in (command, args) if item)
+            if process:
+                return process
+        return None
 
     def find(value: Any) -> str | None:
         if isinstance(value, dict):
@@ -1954,6 +2106,20 @@ def secret_key_ref_environment_keys(source: str) -> set[str]:
     return keys
 
 
+def substitute_process_path(
+    process: str,
+    source_path: str,
+    materialized_path: str,
+) -> str | None:
+    path = re.escape(source_path)
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_./-])(?P<quote>['\"]?){path}(?P=quote)"
+        r"(?![A-Za-z0-9_./-])"
+    )
+    rewritten, count = pattern.subn(shlex.quote(materialized_path), process)
+    return rewritten if count == 1 else None
+
+
 def reconcile_operator_startup_files(
     candidate: Path,
     evidence: dict[str, Any],
@@ -1974,17 +2140,23 @@ def reconcile_operator_startup_files(
             continue
         path = item.get("path")
         workload = item.get("workload")
+        materialized_path = item.get("materializedPath", path)
         if (
             not isinstance(path, str)
             or not path.startswith("/")
-            or candidate_provisions_path(source, path)
+            or not isinstance(materialized_path, str)
+            or not materialized_path.startswith("/")
+            or candidate_provisions_path(source, materialized_path)
         ):
             continue
         process = evidence_process(
             evidence,
             workload if isinstance(workload, str) else None,
         )
-        if not process or path not in process:
+        if not process:
+            continue
+        process = substitute_process_path(process, path, materialized_path)
+        if not process:
             continue
 
         tokens = {
@@ -2015,7 +2187,8 @@ def reconcile_operator_startup_files(
         existing = candidate_runtime_command(source, environment_key)
         base_command = existing if existing and process in existing else f"exec {process}"
         command = (
-            f"printf '%s' \"${environment_key}\" > {shlex.quote(path)}"
+            f"umask 077; printf '%s' \"${environment_key}\" > "
+            f"{shlex.quote(materialized_path)}"
             f" && {base_command}"
         )
         rewritten = insert_runtime_command(
@@ -2030,7 +2203,7 @@ def reconcile_operator_startup_files(
         changes.append(
             {
                 "workload": str(workload or ""),
-                "path": path,
+                "path": materialized_path,
                 "secretEnvironment": environment_key,
             }
         )
@@ -2669,8 +2842,11 @@ Expected/golden application definitions are unavailable.
             source_root=repository_root,
             source_path=source_path,
         )
+        startup_path_changes = reconcile_operator_materialized_paths(evidence)
         if startup_file_changes:
             status["startupFileChanges"] = startup_file_changes
+        if startup_path_changes:
+            status["startupPathChanges"] = startup_path_changes
         write_json(run_dir / "reviewer-evidence.json", evidence)
         if evidence.get("status") in {"blocked", "needs_more_info", "conflict"}:
             status["reason"] = "independent evidence could not close the requested profile"

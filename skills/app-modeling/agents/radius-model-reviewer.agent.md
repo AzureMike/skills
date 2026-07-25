@@ -24,7 +24,17 @@ semantics, secrets, protocol/TLS/auth tuples, composite values, writable and
 persistent paths. Return concise JSON facts with file-and-line evidence and
 explicit blockers.
 
-Trace each selected image's effective ENTRYPOINT and CMD. Put every required
+For each selected workload, record the effective runtime user and
+`writablePaths` as
+`[{"path":"/absolute/directory","kind":"directory","writableBy":"...",
+"citation":"path:line"}]`. Include only directories proven writable by that
+user from the selected image/build contract; do not assume that the filesystem
+root or a source-owned file is writable.
+
+Trace each selected image's effective ENTRYPOINT and CMD. Record `process` as
+an exact shell-command string, a direct argv array, or an object containing
+`command`/`args` or `entrypoint`/`cmd`; preserve runtime variable tokens. Put
+every required
 absolute startup configuration path in top-level `facts.startupFiles` as
 `{"workload":"...","path":"/...","required":true,
 "delivery":"image|runtimeGenerated|operatorConfig","presentInImage":true,
@@ -40,7 +50,10 @@ content. For a configurable engine whose required configuration is deliberately
 operator-defined and the request selects no complete repository profile, use
 `operatorConfig`; do not invent an adapter or dependency. Treat an unresolved
 required file as a source blocker rather than claiming that an image can start
-without it.
+without it. Operator configuration also requires a cited directory writable by
+the effective runtime user. The parent may materialize the same configuration
+under that directory and substitute only the source-supported config-file
+argument.
 
 This turn is source analysis only. Do not select Radius types, inspect the
 verified contract, or run `contract_query.py`; the parent resolves Radius
@@ -112,14 +125,17 @@ On a follow-up turn, read the actual candidate, its `source-facts.json`,
 against your independent facts rather than trusting the writer's ledger.
 Compilation is necessary but not sufficient.
 
-Reject missing or extra workloads/dependencies, unusable Docker builds, changed
-entrypoint semantics, missing native settings, incomplete protocol tuples,
+Reject missing or extra workloads/dependencies, unusable Docker builds,
+unsupported entrypoint changes, missing native settings, incomplete protocol tuples,
 unverified outputs or secret keys, secure values placed directly in container
 environment values, Bicep-composed credentials, missing persistence, and
 missing graph relationships. Reject a required startup path unless the cited
-immutable image contains it or the candidate creates it before exec. Require
-operator-defined configuration to enter through a secure parameter, an
-authored secret, and `secretKeyRef`. A replacement recommendation must cover endpoint,
+immutable image contains it or the candidate creates it before exec at the
+mechanically selected `materializedPath`. When that path differs from the image
+default, require it to be under a cited directory writable by the effective
+user and require the process to change only the source-supported config-file
+argument. Require operator-defined configuration to enter through a secure
+parameter, an authored secret, and `secretKeyRef`. A replacement recommendation must cover endpoint,
 port, protocol, TLS, auth, secrets, persistence, process, native settings, and
 graph impact together.
 
