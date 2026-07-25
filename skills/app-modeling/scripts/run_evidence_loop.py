@@ -328,6 +328,24 @@ def normalize_review(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_evidence(value: dict[str, Any]) -> dict[str, Any]:
+    def normalize_named_items(
+        raw: Any,
+        *,
+        object_markers: set[str],
+    ) -> list[dict[str, Any]] | None:
+        if isinstance(raw, list):
+            return [item for item in raw if isinstance(item, dict)]
+        if not isinstance(raw, dict):
+            return None
+        if object_markers.intersection(raw):
+            return [raw]
+        if raw and all(isinstance(item, dict) for item in raw.values()):
+            return [
+                {"name": name, **item} if not item.get("name") else item
+                for name, item in raw.items()
+            ]
+        return None
+
     if str(value.get("status", "")).startswith("source_facts_complete"):
         value["status"] = "complete"
     if (
@@ -337,24 +355,70 @@ def normalize_evidence(value: dict[str, Any]) -> dict[str, Any]:
         value["blockers"] = []
     facts = value.get("facts")
     if isinstance(facts, dict):
-        if not isinstance(facts.get("workloads"), list):
-            workload = facts.get("workload")
-            application = facts.get("application")
-            if isinstance(workload, dict):
-                facts["workloads"] = [workload]
-            elif isinstance(application, dict):
-                facts["workloads"] = [application]
-        if not isinstance(facts.get("dependencies"), list):
+        workloads = normalize_named_items(
+            facts.get("workloads"),
+            object_markers={
+                "name",
+                "image",
+                "build",
+                "process",
+                "listener",
+                "nativeSettings",
+            },
+        )
+        if workloads is None:
+            for alias in (
+                "workload",
+                "application",
+                "productionWorkload",
+                "selectedWorkload",
+            ):
+                workloads = normalize_named_items(
+                    facts.get(alias),
+                    object_markers={
+                        "name",
+                        "image",
+                        "build",
+                        "process",
+                        "listener",
+                        "nativeSettings",
+                    },
+                )
+                if workloads is not None:
+                    break
+        if workloads is not None:
+            facts["workloads"] = workloads
+
+        dependencies = normalize_named_items(
+            facts.get("dependencies"),
+            object_markers={
+                "kind",
+                "type",
+                "sourceVersion",
+                "clientLibrary",
+                "supportedOverrides",
+            },
+        )
+        if dependencies is None:
             dependencies = []
-            dependency = facts.get("dependency")
-            if isinstance(dependency, dict):
-                dependencies.append(dependency)
+            dependency = normalize_named_items(
+                facts.get("dependency"),
+                object_markers={
+                    "kind",
+                    "type",
+                    "sourceVersion",
+                    "clientLibrary",
+                    "supportedOverrides",
+                },
+            )
+            if dependency:
+                dependencies.extend(dependency)
             for alias in ("database", "broker", "cache", "storage", "model", "search"):
                 item = facts.get(alias)
                 if isinstance(item, dict) and item.get("kind"):
                     dependencies.append(item)
-            if dependencies:
-                facts["dependencies"] = dependencies
+        if dependencies:
+            facts["dependencies"] = dependencies
         if not isinstance(facts.get("route"), dict):
             application = facts.get("application")
             if isinstance(application, dict) and isinstance(
@@ -842,7 +906,9 @@ def insert_runtime_command(
             index
             for index in range(env_index - 1, -1, -1)
             if re.match(
-                rf"^{re.escape(container_indent)}[A-Za-z_][A-Za-z0-9_-]*\s*:\s*\{{\s*$",
+                rf"^{re.escape(container_indent)}(?:"
+                r"[A-Za-z_][A-Za-z0-9_-]*|'[^']+'|\"[^\"]+\""
+                r")\s*:\s*\{\s*$",
                 lines[index],
             )
         ),
