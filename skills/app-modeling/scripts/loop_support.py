@@ -82,6 +82,15 @@ def run_bounded(
     cwd: Path,
     timeout: float,
 ) -> tuple[int, str, str, bool]:
+    def timeout_text(
+        current: str | bytes | None,
+        fallback: str | bytes | None,
+    ) -> str:
+        value = current if current is not None else fallback
+        if isinstance(value, bytes):
+            return value.decode(errors="replace")
+        return value or ""
+
     process = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -93,14 +102,31 @@ def run_bounded(
     try:
         stdout, stderr = process.communicate(timeout=max(1, timeout))
         return process.returncode, stdout, stderr, False
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as first:
         descendants = descendant_processes(process.pid)
         terminate_processes(process, descendants, signal.SIGTERM)
         try:
             stdout, stderr = process.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as second:
+            descendants.extend(descendant_processes(process.pid))
             terminate_processes(process, descendants, signal.SIGKILL)
-            stdout, stderr = process.communicate()
+            try:
+                stdout, stderr = process.communicate(timeout=2)
+            except subprocess.TimeoutExpired as final:
+                if process.stdout is not None:
+                    process.stdout.close()
+                if process.stderr is not None:
+                    process.stderr.close()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass
+                stdout = timeout_text(final.stdout, second.stdout or first.stdout)
+                stderr = timeout_text(final.stderr, second.stderr or first.stderr)
         return 124, stdout, stderr, True
 
 
