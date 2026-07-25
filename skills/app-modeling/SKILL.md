@@ -43,13 +43,59 @@ Before writing the Bicep, confirm the repository satisfies the [Prerequisites](#
 
 1. Select one runnable deployment profile. Treat explicit user, scenario, and target-repository deployment requirements for Radius types, resource-name parameters, workload roles/count, native configuration keys, secret bindings, provider profile, protocol values, and connection names as acceptance criteria. Verify that the pinned source supports that profile; do not silently replace it with an easier default or optional backend.
 2. Build an internal requirement ledger that maps every acceptance criterion and planned resource property reference to source evidence, an exact Radius schema/recipe field, and the workload setting that consumes it. Use it for reasoning and validation; do not print it or add it as Bicep comments. Follow [runtime-contract.md](references/runtime-contract.md).
-3. Inventory every executable workload and backing service in the selected profile from manifests, Dockerfiles, compose/Helm files, entrypoints, source configuration reads, client initialization, and referenced config files. Treat web, worker, producer, consumer, migration, scheduler, and sidecar roles separately. Model a backing service only when source evidence proves it is mandatory for the selected startup/configuration path; a repo-wide optional dependency, extra, adapter, or example does not become a resource.
-4. Extract each workload's runtime contract: image/build context and target platform, entrypoint and arguments, listener and ports, required environment/configuration including parser coercion and unset behavior, secrets, writable storage, dependencies, wire protocols, authentication/bootstrap setup, and feature-critical configuration. Inspect CLI flags and structured fields as well as environment variables.
+3. Inventory every executable workload and backing service in the selected profile from manifests, Dockerfiles, compose/Helm files, entrypoints, source configuration reads, client initialization, and referenced config files. Treat web, worker, producer, consumer, migration, scheduler, and sidecar roles separately. Model a backing service only when source evidence proves it is mandatory for the selected startup/configuration path; a repo-wide optional dependency, extra, adapter, or example does not become a resource. Settle which backing service the application needs with [Decision Rule 1](#1-whether-a-backing-service-is-needed-and-which-one) — read the repository's own deployment manifests before concluding it needs none.
+4. Extract each workload's runtime contract: image/build context and target platform, entrypoint and arguments, listener and ports, required environment/configuration including parser coercion and unset behavior, secrets, writable storage, dependencies, wire protocols, authentication/bootstrap setup, and feature-critical configuration. Inspect CLI flags and structured fields as well as environment variables. Apply [Decision Rules](#decision-rules) 2, 5, and 6 when deciding whether to override the entrypoint, which settings to carry, and which port to expose.
 5. Map every selected backing service to a Radius type with [component-catalog.md](references/component-catalog.md), using [architecture-patterns.md](references/architecture-patterns.md) only as context. Report unsupported essential components instead of substituting unrelated types.
 6. First create or update `.radius/bicepconfig.json` (see [bicepconfig.json](#bicepconfigjson)), using any `bicepconfig.json` currently applicable to `.radius/app.bicep` as input. Resolve every emitted type and planned property read/write against the exact target Environment schema and Recipe contract, then reconcile that contract with the extension that `.radius/bicepconfig.json` declares. For every output, open the exact Environment recipe or matching immutable provider recipe-pack source and record the verbatim mapping; schema descriptions and property names are not recipe evidence. Also prove each managed-secret name/key, every omitted optional recipe input, and target Environment recipe availability for every emitted extensible type. The exact target schema and Recipe outrank stale mutable extension metadata such as `radius:latest`. Refresh or pin a verified compatible extension when possible; otherwise fail closed before generation rather than changing or deleting required wiring to fit the stale artifact.
 7. Build the application's own workloads from the repository Dockerfile via `Radius.Compute/containerImages`; use a pinned published image only for a genuinely third-party or backing container. Require a complete, practical build context and pin `build.source` to the exact modeled checkout or an explicit immutable release tag. Resolve the exact `containerImages` Recipe: set a Docker-valid immutable `tag` when its omitted-tag path is not proven usable, select explicit target-compatible `build.platforms` when the Dockerfile cannot safely build every default platform, and preserve required Git metadata with schema-supported build arguments. If an application workload's Dockerfile or context is unusable, report the packaging gap instead of substituting a published image for the application's own code. Map every runtime value using [connection-conventions.md](references/connection-conventions.md), [secrets-handling.md](references/secrets-handling.md), and [bicep-structure-rules.md](references/bicep-structure-rules.md).
 8. Generate the Bicep using [naming-conventions.md](references/naming-conventions.md), then compile it with an extension compatible with the exact target contract. Treat unknown type/property warnings as unresolved schema mismatches. Never make compilation pass by deleting a required backend activation, native configuration value, secret binding, or dependency edge.
 9. Perform the [validation checklist](#validation-checklist) and close every item in the requirement ledger. Compilation or process startup alone is not success.
+
+## Decision Rules
+
+These are the decisions that most often come out wrong. Each is settled by evidence in the repository, not by what the image, the type catalog, or convention for that technology suggests. Apply them while carrying out the workflow above.
+
+### 1. Whether a backing service is needed, and which one
+
+A container image cannot tell you whether the application needs a database, a broker, or a bucket — it only tells you how the process starts. The repository's own deployment manifests can, because they are how its maintainers actually run it.
+
+Inventory the manifests the repository uses to deploy itself: Compose files, Helm charts (`Chart.yaml`, `requirements.yaml`, `values.yaml`, and the values the chart wires into the workload), and Kubernetes manifests. Look at the repository root and inside a deployment directory (`deploy/`, `deployment/`, `charts/`, `chart/`, `k8s/`, `kubernetes/`, `helm/`, `manifests/`, `install/`). A chart dependency or a Compose service the application is wired to is direct evidence that it needs that service, and the keys the chart sets are direct evidence of the configuration grammar the application expects.
+
+Ignore manifests inside test, example, fixture, benchmark, or per-plugin directories. A repository that ships one Compose file per plugin or one per driver is enumerating what it *can* talk to, not what it requires.
+
+When the repository deploys itself with an embedded copy of a service, model the managed Radius equivalent of that service. The embedded copy is how it runs on a laptop, not how it should run on a platform.
+
+If nothing in the repository evidences a backing service, model the application alone and say why. Do not choose a plausible one from the type catalog to make the model look complete.
+
+### 2. Let the image run its own entrypoint
+
+Do not set `command` or `args` to a restatement of the image's own `ENTRYPOINT` or `CMD`. It creates a second place for the same fact to be wrong, and it silently discards whatever the image's entrypoint script does before starting the process.
+
+Override only when something must happen before the application starts — a setup step, a generated configuration file, a bootstrap or migration. In that case the override performs that step and then runs the application.
+
+### 3. A credential is never an application default
+
+A password, key, or ready-made connection string is generated when the service is provisioned. Nothing in the application source can be it, so an application default never satisfies one. Bind it from the resource's managed secret with `secretKeyRef`, using the declared secret-name path and an exact declared key.
+
+Never write a placeholder literal for a credential. It compiles, it validates, and it hands the container a value that cannot authenticate.
+
+### 4. A connection already publishes its non-secret properties
+
+A declared connection projects the target's non-secret properties into the container automatically. Do not hand-bind an environment variable whose name that projection already supplies, and do not disable the default projection in order to write your own copy of the same value. Secrets are not projected this way and always need an explicit binding.
+
+### 5. Inert configuration versus required configuration
+
+Do not emit an environment variable that only restates a default the application already applies and that changes nothing about how it runs.
+
+But a setting the application refuses to start without is never inert, however cosmetic it looks. If the source validates it as non-blank, marks it required, or exits when it is missing, it belongs in the model. A name or label the process demands is required configuration, not decoration.
+
+### 6. Ports come from the listener
+
+Take the port from the one the process actually binds — the listener in the source, or the value its configuration defaults to. An `EXPOSE` line alone is documentation, and the conventional port for a technology is not evidence about this application.
+
+### 7. Persistent volumes and routes are opt-in
+
+Add `Radius.Compute/persistentVolumes` or `Radius.Compute/routes` only when the request asks for persistence or external exposure, or when the application cannot perform its primary function without one. Scratch space the container filesystem already provides is not a reason to declare a volume.
 
 ## Deployment Profile and Acceptance Contract
 
@@ -215,6 +261,7 @@ Rules:
 - A direct resource property or secret reference creates dependency ordering. Do not add a connection merely for ordering; retain one only when the application/tooling consumes the relationship.
 - An explicit request for Radius relationship metadata is a valid reason to retain a connection. Use the exact requested connection key and `source`; explicit native wiring may still be required for the workload.
 - Explicit native variables may coexist with generic projection. Avoid conflicting values, and use `disableDefaultEnvVars` only when the exact container schema supports it and the generic variables would be harmful.
+- Do not hand-write an environment variable whose name the generic projection already supplies for that connection, and do not disable the projection in order to write your own copy of the same value. See [Decision Rule 4](#4-a-connection-already-publishes-its-non-secret-properties).
 
 ## Secrets
 
@@ -247,6 +294,10 @@ Before returning the Bicep, verify:
 - [ ] Every dependency has a complete client tuple: subresource name, endpoint/FQDN transformation, port, protocol/version, TLS mode, auth mechanism/identity, secret source, and final client syntax. Provider modules, SKUs, regions, and firewall configuration remain outside `app.bicep`.
 - [ ] Primary-feature readiness is proven: required model aliases, storage backends, database clients, messaging inputs/outputs, and noninteractive authentication/bootstrap settings are configured and reference the selected resources. A health endpoint, login screen without a usable bootstrap path, or idle/placeholder process is not sufficient.
 - [ ] No ledger row was closed by deleting required wiring to obtain a clean compile. Any schema, Recipe, or Environment availability mismatch produced a fail-closed report instead of a partial application definition.
+- [ ] The backing-service decision is backed by the repository's own deployment manifests, or the model deliberately contains no backing service and the reply says why. No service was chosen from the type catalog because it looked plausible ([Decision Rule 1](#1-whether-a-backing-service-is-needed-and-which-one)).
+- [ ] No container restates its image's own `ENTRYPOINT`/`CMD` as `command`/`args`. An override exists only where a setup step must run before the application ([Decision Rule 2](#2-let-the-image-run-its-own-entrypoint)).
+- [ ] No credential is written as a literal value. Every generated password, key, or connection string is bound from the resource's managed secret ([Decision Rule 3](#3-a-credential-is-never-an-application-default)).
+- [ ] Every emitted environment variable either changes how the application runs or is one it refuses to start without; none merely restates a default the application already applies ([Decision Rule 5](#5-inert-configuration-versus-required-configuration)).
 - [ ] Perform the static consistency pass in [runtime-contract.md](references/runtime-contract.md); no unresolved runtime caveat remains.
 - [ ] The generated Bicep contains no explanatory comments. `.radius/bicepconfig.json` resolves the `radius` extension for `app.bicep`: created or updated in place (a parent `bicepconfig.json` is used only as input, never modified).
 
