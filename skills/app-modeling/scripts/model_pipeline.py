@@ -58,6 +58,38 @@ def identifier(value: str) -> str:
     return result
 
 
+class Symbols:
+    """Hands out Bicep symbolic names that cannot collide.
+
+    Parameters and resources share one namespace in Bicep, and several names
+    here are the renderer's own -- `app`, `applicationSecrets`, the
+    `environment` parameter -- while the rest are derived from identifiers the
+    source model chose. An application whose own service is called `app`
+    therefore rendered `app` twice and the compiler rejected the file with
+    BCP028. Symbolic names are internal to the template and do not appear in
+    any deployed resource, so a colliding derived name is suffixed rather than
+    faulted.
+    """
+
+    def __init__(self, parameters: dict[str, Any], *reserved: str) -> None:
+        self._parameters = parameters
+        self._taken: set[str] = set(reserved)
+
+    def take(self, preferred: str) -> str:
+        if preferred not in self:
+            self._taken.add(preferred)
+            return preferred
+        for suffix in range(2, 100):
+            candidate = f"{preferred}{suffix}"
+            if candidate not in self:
+                self._taken.add(candidate)
+                return candidate
+        raise ValueError(f"cannot allocate a symbol for {preferred!r}")
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._taken or name in self._parameters
+
+
 def slug(value: str) -> str:
     return "-".join(re.findall(r"[A-Za-z0-9]+", value)).lower()
 
@@ -807,7 +839,10 @@ def resolve(
         name.split("@", 1)[0]: name for name in contract["resourceTypes"]
     }
     parameters: dict[str, dict[str, Any]] = {"environment": {"secure": False}}
-    app_symbol = "app"
+    # `app` and `applicationSecrets` are referenced by name elsewhere in the
+    # renderer, so they are reserved before any source-derived name is taken.
+    symbols = Symbols(parameters, "applicationSecrets")
+    app_symbol = symbols.take("app")
     resources: list[dict[str, Any]] = []
     requirements = {
         "dependencies": [],
@@ -828,10 +863,10 @@ def resolve(
     )
 
     for dependency in model["dependencies"]:
-        symbol = identifier(dependency["id"])
+        symbol = symbols.take(identifier(dependency["id"]))
         qualified_type = dependency_types(contract)[dependency["kind"]]
         recipe = contract["azureRecipeMappings"].get(qualified_type, {})
-        name_parameter = symbol + "Name"
+        name_parameter = symbols.take(symbol + "Name")
         # A provider-global name must be chosen by whoever deploys, so the
         # contract requires it be asked for rather than defaulted.
         global_name = bool(recipe.get("providerGlobalName")) and bool(
@@ -899,11 +934,11 @@ def resolve(
     secret_env_keys: dict[tuple[str, str], str] = {}
 
     for workload in model["workloads"]:
-        workload_symbol = identifier(workload["id"])
+        workload_symbol = symbols.take(identifier(workload["id"]))
         workload_symbols[workload["id"]] = workload_symbol
         image = workload["image"]
         if image["kind"] == "build":
-            image_symbol = workload_symbol + "Image"
+            image_symbol = symbols.take(workload_symbol + "Image")
             context = image["context"].strip("/")
             app_path = "" if source_path in {"", "."} else source_path.strip("/") + "/"
             # A context is relative to the application directory, but when the
@@ -1321,7 +1356,7 @@ def resolve(
             # Durable storage is a deployment decision, so it is opt-in.
             continue
         workload_symbol = workload_symbols[item["workloadId"]]
-        volume_symbol = workload_symbol + "Volume" + str(index)
+        volume_symbol = symbols.take(workload_symbol + "Volume" + str(index))
         resources.insert(
             1,
             {
@@ -1371,7 +1406,9 @@ def resolve(
         for listener in workload["listeners"]:
             if not listener["external"]:
                 continue
-            route_symbol = workload_symbol + pascal(listener["name"]) + "Route"
+            route_symbol = symbols.take(
+                workload_symbol + pascal(listener["name"]) + "Route"
+            )
             destination = {
                 "resourceId": Expression(f"{workload_symbol}.id"),
                 "containerName": workload_resource["containerName"],
