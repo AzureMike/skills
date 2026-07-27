@@ -91,10 +91,14 @@ credential, port, and literal value from the repository being modeled.
 
 ## Rules the compiler cannot check
 
-1. **Read only what the Recipe returns.** `assets/recipe-outputs.json` lists every
-   property each Recipe actually sets. A property declared in the type schema but
-   absent from that list resolves to null at deploy time. PostgreSQL declares
-   `port` and never sets it; use the provider's fixed `5432` instead.
+1. **Read only what the Recipe returns or the template sets.** Reading back a
+   property this file itself sets on a resource (`db.properties.database` when
+   you wrote `database: 'todos'`) is fine — the value is right there. A property
+   the Recipe is expected to populate must appear in
+   `assets/recipe-outputs.json`, which lists every property each Recipe actually
+   sets; one declared in the type schema but absent from that list resolves to
+   null at deploy time. PostgreSQL declares `port` and never sets it; use the
+   provider's fixed `5432` instead.
 
 2. **Bind managed secrets by reference.** When `recipe-outputs.json` lists a
    `secrets` entry, reach it through
@@ -114,11 +118,18 @@ credential, port, and literal value from the repository being modeled.
 5. **Do not interpolate a secret into a larger value.** Bicep composes at deploy
    time, which writes the combined value into deployment state. Bind the parts
    separately and let the application compose them, or bind a managed connection
-   string whose format the source already accepts.
+   string whose format the source already accepts. When the application composes
+   at runtime: a credential embedded in a URL must be URL-encoded and shell
+   expansion is not encoding, and Kubernetes `$(VAR)` expansion sees only
+   environment variables declared earlier in the map.
 
 6. **Pin the build to an immutable ref.** `build.source` must carry
    `?ref=<40-char commit sha>`. Never `main`, `edge`, or `latest`. Set `tag` to
-   that same commit.
+   that same commit. When the Dockerfile is not at the repo root, the context is
+   `git::https://github.com/<org>/<repo>.git//<subdir>?ref=<sha>`, and
+   `build.dockerfile` names a Dockerfile not called `Dockerfile`. If the build
+   needs git metadata (BuildKit git contexts omit `.git`), set
+   `build.args.BUILDKIT_CONTEXT_KEEP_GIT_DIR: '1'`.
 
 7. **Model only what the selected startup path requires.** An installed package,
    optional extra, test fixture, or example is not evidence of a dependency.
@@ -190,26 +201,55 @@ credential, port, and literal value from the repository being modeled.
     custom type. Declaring none, and leaving the workload to be configured by
     hand, is the one option that is always wrong.
 
+19. **Set explicit `build.platforms` unless the Dockerfile proves cross-builds.**
+    Do not assume the Recipe's multi-platform default or QEMU emulation. A
+    Dockerfile that runs target-architecture binaries in its build stages with
+    no `BUILDPLATFORM`/`TARGETARCH` strategy builds one platform; set that one
+    explicitly (for example `['linux/amd64']`).
+
+20. **Deliver an external config file by mounting an authored secret.** When an
+    unmodified image needs a config file, author it into
+    `Radius.Security/secrets` `data` and mount it, rather than assuming the
+    image has a shell to generate it at startup:
+
+    ```bicep
+    resource runtimeConfig 'Radius.Security/secrets@2025-08-01-preview' = {
+      name: 'runtime-config'
+      properties: {
+        environment: environment
+        application: app.id
+        data: {
+          #disable-next-line use-secure-value-for-secure-inputs
+          'app.yaml': { value: '<complete config file content>' }
+        }
+      }
+    }
+    ```
+
+    The container mounts it with `volumeMounts` (`volumeName`/`mountPath`), a
+    `volumes` entry with `secretName: runtimeConfig.name`, and `args` pointing
+    the process at the mounted path. The `#disable-next-line` directive is
+    allowed **only** when the value is
+    genuinely non-credential config content — the compile must otherwise be
+    warning-free, and a real credential in the file body belongs in env via a
+    `@secure()` parameter or `secretKeyRef`, referenced from the file when the
+    format supports it. Generate config at startup instead only when the image
+    verifiably contains the shell and tools and the destination is writable.
+
+21. **Generated Bicep carries no commentary.** No explanatory comments and no
+    `@description` decorators. The one exception is a functional
+    `#disable-next-line` directive per rule 20.
+
 ## Verify
 
-```sh
-bicep build .radius/app.bicep --diagnostics-format sarif --stdout \
-  > /tmp/app.json 2> /tmp/app.sarif
-python3 scripts/check.py /tmp/app.json --diagnostics /tmp/app.sarif
-```
-
-`bicep build` exits 0 on a warning, so a silent exit code proves nothing on its
-own. An unknown type, an unknown property, a missing required property, a
-`@secure()` parameter carrying a default, and a secret reaching an output are
-all warnings. Capture the diagnostics and pass them in.
-
-`check.py` returns `ALLOW`, `WARN`, or `DENY` with a stable `signature`.
-
-- `DENY` — fix it yourself and re-run.
-- `WARN` — advisory. Decide using the source evidence and note the tradeoff in
-  your summary. Never stop to ask.
-- If the `signature` repeats after a repair attempt, the fix is not converging.
-  Stop and report the finding.
+Run the compile and check from step 5 of [SKILL.md](../SKILL.md#workflow). The
+verdict is binary: `ALLOW` or `DENY`, with a stable `signature`. Every finding
+is a provable defect — fix it and re-run; there is nothing to adjudicate. Every
+compiler diagnostic in the SARIF denies, warnings included, so the compile must
+be warning-free (the only sanctioned suppression is rule 20's
+`#disable-next-line` for a non-credential config file). If the `signature`
+repeats after a repair attempt, the fix is not converging — stop and report the
+finding.
 
 Decide every ambiguity yourself. When several runnable profiles exist, pick the
 one the source documents most completely, model it, and say which you chose and

@@ -242,7 +242,9 @@ touch anything outside `.radius/`.
 
 - `app.bicep` compiles with both the `radius` and custom-types extensions, and
   the compile plus `check.py` run in [authoring.md](authoring.md) still applies
-  unchanged — a custom resource nothing consumes is reported the same way.
+  unchanged — a custom resource nothing consumes is reported the same way, and
+  a workload that consumes a `Radius.Resources/*` resource without declaring a
+  connection to it is denied exactly like a predefined backing service.
 - Every artifact above exists in `.radius/`.
 - The pack `source` resolves: a pinned MCR AVM path, or a GHCR path that was
   actually published.

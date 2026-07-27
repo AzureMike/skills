@@ -70,11 +70,10 @@ If no Dockerfile is present, stop before writing anything and return only:
 
    `bicep build` exits 0 on a warning, and both an unknown type or property and
    a credential headed for deployment state are reported as warnings, so the
-   diagnostics have to be captured and passed in. `check.py` reads the compiled
-   ARM JSON and returns
-   `ALLOW`, `WARN`, or `DENY` with a stable `signature`. Repair a `DENY` and
-   re-run. Weigh a `WARN` against
-   the source evidence and note the tradeoff in the summary. If the `signature`
+   diagnostics have to be captured and passed in. Every diagnostic in the SARIF
+   is a failure — the compile must be warning-free. `check.py` reads the
+   compiled ARM JSON and returns `ALLOW` or `DENY` with a stable `signature`.
+   Every finding is a provable defect: repair it and re-run. If the `signature`
    repeats after a repair, the fix is not converging — stop and report it.
 
 Decide every modeling ambiguity from the evidence. The pull request in
@@ -167,7 +166,8 @@ must resolve through `.radius/bicepconfig.json`.
    other file.
 2. Commit both, and push when a remote is configured.
 3. Reply with a one-line intro naming the app, then a short summary of the
-   resources identified and any `WARN` tradeoff or unsupported component. Keep
+   resources identified, any judgment call worth flagging (profile choice, a
+   `#disable-next-line` justification), and any unsupported component. Keep
    the raw analysis and file contents out of it.
 4. Ask whether to open a pull request against the default branch. Do not open it
    without confirmation. On confirmation, use the title
