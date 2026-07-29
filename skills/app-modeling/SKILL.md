@@ -136,7 +136,7 @@ Use the `radius-project/resource-types-contrib` repository for discovery. Do NOT
 
 Read the matching schema file for property names, types, sensitivity, read-only outputs, and API versions. Open the exact Recipe to verify output mappings, managed-secret keys, omitted-input behavior, and registration in the target Environment. The configured extension and deployed contract must agree. Resolve a compatible immutable extension or stop and report the mismatch; never guess a path, remove required wiring, or substitute generic connection projection.
 
-The following is the COMPLETE allow-list of types this skill may emit:
+The following is the allow-list of predefined types this skill emits when one fits the need:
 
 | Need | Resource Type |
 |---|---|
@@ -157,15 +157,15 @@ The following is the COMPLETE allow-list of types this skill may emit:
 | External ingress | `Radius.Compute/routes` |
 | Secrets | `Radius.Security/secrets` |
 
-Do NOT use any type not listed above. Do NOT invent properties.
+Do NOT invent properties on these types, and do NOT substitute one predefined type for another. When a backing service the application genuinely needs has NO matching type above, do not stop and do not force an ill-fitting type: generate a custom resource type under the `Radius.Resources` namespace, following [custom-resource-types.md](references/custom-resource-types.md), which is authoritative for the schema, extension, recipe, and recipe-pack flow (Azure scope for now).
 
 ## Extension
 
-Declare exactly one extension, `extension radius`. It provides every Radius type (`Radius.Core/*`, `Radius.Compute/*`, `Radius.Data/*`, `Radius.Messaging/*`, `Radius.AI/*`, `Radius.Storage/*`, `Radius.Security/*`). Do NOT declare per-namespace or per-type extensions (`radiusCompute`, `containers`, `kafka`, etc.). The `radius` alias must resolve through `.radius/bicepconfig.json`, which the skill always creates or updates (see [bicepconfig.json](#bicepconfigjson)); only ever write that file, never a config outside `.radius/`.
+Declare `extension radius`. It provides every predefined Radius type (`Radius.Core/*`, `Radius.Compute/*`, `Radius.Data/*`, `Radius.Messaging/*`, `Radius.AI/*`, `Radius.Storage/*`, `Radius.Security/*`). Do NOT declare per-namespace or per-type extensions (`radiusCompute`, `containers`, `kafka`, etc.). When the application uses a generated custom type (see [custom-resource-types.md](references/custom-resource-types.md)), also declare the local custom-types extension published into `.radius/` (for example `extension customTypes`). Every extension alias must resolve through `.radius/bicepconfig.json`, which the skill always creates or updates (see [bicepconfig.json](#bicepconfigjson)); only ever write that file, never a config outside `.radius/`.
 
 ## bicepconfig.json
 
-`app.bicep` cannot compile or deploy unless a `bicepconfig.json` resolves the `radius` extension. Always create or update `.radius/bicepconfig.json` (co-located with `.radius/app.bicep`) so it fits the generated `app.bicep`; only ever write that file, never a `bicepconfig.json` outside `.radius/`.
+`app.bicep` cannot compile or deploy unless a `bicepconfig.json` resolves the `radius` extension. Always create or update `.radius/bicepconfig.json` (co-located with `.radius/app.bicep`) so it fits the generated `app.bicep`; only ever write that file, never a `bicepconfig.json` outside `.radius/`. When the application uses a generated custom type, this file also aliases the local custom-types extension tgz alongside the `radius` extension (see [custom-resource-types.md](references/custom-resource-types.md)).
 
 - If `.radius/bicepconfig.json` already exists, update it to fit `app.bicep`: add or correct what `app.bicep` needs (the `radius` extension reference and `extensibility`), preserve unrelated existing settings, and change or remove entries only where they conflict with what `app.bicep` needs. An already-correct file produces an empty diff.
 - If it does not exist, create it. When a `bicepconfig.json` in a parent directory would otherwise be the config discovered for `.radius/app.bicep` (before you write `.radius/bicepconfig.json`), use it as input: seed the new file from its compatible settings and adjust so it fits `app.bicep` (add, correct, or drop entries as needed). Do not modify the parent file.
@@ -188,7 +188,7 @@ Default to the `radius:latest` tag only when no exact target Environment contrac
 
 Declare resources in this order (do NOT output this as code — it is only for your reference):
 
-1. Extension: `extension radius` (single, covers all Radius types)
+1. Extensions: `extension radius` (always; covers all predefined Radius types) plus the local custom-types extension (for example `extension customTypes`) when the app uses a generated `Radius.Resources/*` custom type
 2. Params: `environment`; add a `@secure() param` for each developer-supplied secret value
 3. Application resource (`Radius.Core/applications@2025-08-01-preview`) — always exactly one
 4. Data / infrastructure resources (databases, caches, message brokers, object storage, AI services)
@@ -234,8 +234,8 @@ Before returning the Bicep, verify:
 - [ ] The repository contains a Dockerfile; a repo without one was rejected with the prerequisite error and produced no files (see [Prerequisites](#prerequisites)).
 - [ ] One deployment profile is selected. Every explicit type, resource-name parameter, workload role/count, native key, required value, secret binding, and connection name from the request is represented in a closed requirement ledger. Every modeled backing service is mandatory for that selected source path; optional repository-wide dependencies are omitted.
 - [ ] Every planned resource property read/write has its verbatim path in the ledger and exists in the exact target schema/API version. Every recipe-generated output has a mapping copied from the exact target Environment Recipe or matching immutable provider recipe source; every managed-secret reference has the declared nested secret-name path and exact key; every omitted optional Recipe input is proven safe. An absent path blocks generation rather than being replaced by a guessed property, alias, wrapper, or stale mutable-extension shape.
-- [ ] Exactly one `Radius.Core/applications@2025-08-01-preview`, and one `extension radius` (no per-namespace or per-type extensions).
-- [ ] The file compiles with an extension compatible with the target Environment schema/Recipe contract; every `Radius.*` type is on the allow-list and matches that version's schema and API version. Unknown type/property warnings are resolved, not ignored. A conflicting mutable extension is version drift, not permission to alter required deployment wiring.
+- [ ] Exactly one `Radius.Core/applications@2025-08-01-preview`. `extension radius` is always declared; a local custom-types extension (for example `extension customTypes`) is also declared when the app uses a generated `Radius.Resources/*` custom type. No per-namespace or per-type extensions.
+- [ ] The file compiles with an extension compatible with the target Environment schema/Recipe contract; every `Radius.*` type is on the allow-list or is a generated `Radius.Resources/*` custom type, and matches that version's schema and API version. Unknown type/property warnings are resolved, not ignored. A conflicting mutable extension is version drift, not permission to alter required deployment wiring.
 - [ ] The target Environment has a usable Recipe for every emitted extensible type, including support resources such as `Radius.Security/secrets` and `Radius.Compute/containerImages`.
 - [ ] `param environment string` is declared; add a `@secure() param` for each developer-supplied secret.
 - [ ] Every required executable role is modeled, including co-scheduled producer/consumer or proxy/backend roles. Its image/build, entrypoint/arguments, listener, exposed ports, config artifacts, writable storage/ownership, authentication/bootstrap path, and lifecycle are correct. `containerPort` matches the process; it does not configure the listener.
