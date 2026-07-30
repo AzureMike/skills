@@ -1,6 +1,9 @@
 # Authoring a Radius app.bicep
 
-Write `.radius/app.bicep` and `.radius/bicepconfig.json`. Touch no other file.
+Write `.radius/app.bicep` and `.radius/bicepconfig.json`, plus the generated
+artifacts under `.radius/` when
+[custom-resource-types.md](custom-resource-types.md) requires them. Touch no
+file outside `.radius/`.
 
 The Bicep compiler already enforces resource shapes: property names, object maps
 versus arrays, and required fields. Do not memorize those. Compile, read the
@@ -16,35 +19,35 @@ param environment string
 @secure()
 param dbPassword string
 
-resource app 'Radius.Core/applications@2025-08-01-preview' = {
+resource exampleApp 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'example-app'
   properties: { environment: environment }
 }
 
-resource db 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
+resource mysqlDb 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
   name: 'example-app-mysql'
   properties: {
     environment: environment
-    application: app.id
+    application: exampleApp.id
     database: 'appdb'
     username: 'myadmin'
     password: dbPassword
   }
 }
 
-resource cache 'Radius.Data/redisCaches@2025-08-01-preview' = {
+resource redisCache 'Radius.Data/redisCaches@2025-08-01-preview' = {
   name: 'example-app-cache'
   properties: {
     environment: environment
-    application: app.id
+    application: exampleApp.id
   }
 }
 
-resource image 'Radius.Compute/containerImages@2025-08-01-preview' = {
+resource exampleImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
   name: 'example-app-image'
   properties: {
     environment: environment
-    application: app.id
+    application: exampleApp.id
     tag: '5568077e0b1d1e2c3f4a5b6c7d8e9f0a1b2c3d4e'
     build: {
       source: 'git::https://github.com/org/repo.git?ref=5568077e0b1d1e2c3f4a5b6c7d8e9f0a1b2c3d4e'
@@ -52,22 +55,22 @@ resource image 'Radius.Compute/containerImages@2025-08-01-preview' = {
   }
 }
 
-resource web 'Radius.Compute/containers@2025-08-01-preview' = {
+resource exampleContainer 'Radius.Compute/containers@2025-08-01-preview' = {
   name: 'example-app'
   properties: {
     environment: environment
-    application: app.id
+    application: exampleApp.id
     containers: {
-      web: {
-        image: image.properties.imageReference
+      example: {
+        image: exampleImage.properties.imageReference
         ports: { web: { containerPort: 3000 } }
         env: {
-          MYSQL_HOST: { value: db.properties.host }
+          MYSQL_HOST: { value: mysqlDb.properties.host }
           MYSQL_PASSWORD: { value: dbPassword }
           CACHE_URL: {
             valueFrom: {
               secretKeyRef: {
-                secretName: cache.properties.secrets.name
+                secretName: redisCache.properties.secrets.name
                 key: 'url'
               }
             }
@@ -76,8 +79,8 @@ resource web 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      db: { source: db.id }
-      cache: { source: cache.id }
+      mysqldb: { source: mysqlDb.id }
+      rediscache: { source: redisCache.id }
     }
   }
 }
@@ -92,7 +95,7 @@ credential, port, and literal value from the repository being modeled.
 ## Rules the compiler cannot check
 
 1. **Read only what the Recipe returns or the template sets.** Reading back a
-   property this file itself sets on a resource (`db.properties.database` when
+   property this file itself sets on a resource (`mysqlDb.properties.database` when
    you wrote `database: 'appdb'`) is fine — the value is right there. A property
    the Recipe is expected to populate must appear in
    `assets/recipe-outputs.json`, which lists every property each Recipe actually
@@ -230,7 +233,7 @@ credential, port, and literal value from the repository being modeled.
       name: 'runtime-config'
       properties: {
         environment: environment
-        application: app.id
+        application: exampleApp.id
         data: {
           #disable-next-line use-secure-value-for-secure-inputs
           'app.yaml': { value: '<complete config file content>' }
@@ -295,7 +298,7 @@ credential, port, and literal value from the repository being modeled.
 
 ## Verify
 
-Run the compile and check from step 5 of [SKILL.md](../SKILL.md#workflow). The
+Run [Compile and check](../SKILL.md#compile-and-check) from SKILL.md. The
 verdict is binary: `ALLOW` or `DENY`, with a stable `signature`. Every finding
 is a provable defect — fix it and re-run; there is nothing to adjudicate. Every
 compiler diagnostic in the SARIF denies, warnings included, so the compile must

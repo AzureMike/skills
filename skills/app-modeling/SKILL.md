@@ -33,7 +33,7 @@ When asked to model a repository, first apply the [Prerequisites](#prerequisites
 1. If the requirement ledger cannot be closed against the exact source, schema, and target Environment recipe contracts, do not write, commit, or push a partial application definition. Report the mismatch and the compatible extension or recipe contract required.
 2. Generate the application definition and write `.radius/app.bicep`, `.radius/bicepconfig.json` (see [bicepconfig.json](#bicepconfigjson)), and any artifacts required by [custom-resource-types.md](references/custom-resource-types.md) to the current working branch. If that branch does not exist yet, create it before writing.
 3. Commit the generated files and push the branch when a remote is configured. If the push is rejected for authentication or authorization, stop and report the committed branch instead of attempting credential setup.
-4. In your chat reply, give a one-line intro naming the app (e.g. "I'll create an application definition for `todo-list-app`."), then a short, natural summary of the resources you identified — a brief list such as "Container: `todo-list-app`", "MySQL database", "Secure DB credential binding". A sentence or two of reasoning is fine; don't dump raw source analysis or the full file contents.
+4. In your chat reply, give a one-line intro naming the app (e.g. "I'll create an application definition for `example-app`."), then a short, natural summary of the resources you identified — a brief list such as "Container: `example-app`", "MySQL database", "Secure DB credential binding" — plus any judgment call worth flagging (profile choice, a `#disable-next-line` justification) and any unsupported component. A sentence or two of reasoning is fine; don't dump raw source analysis or the full file contents.
 5. Then ask whether to open a pull request against the default branch.
 
 Don't open the pull request automatically — wait for the user to confirm. If they confirm, open a PR from the working branch against the default branch with title `Add Radius application definition` and body `Add the Radius application definition for <app-name>.`
@@ -64,13 +64,20 @@ bicep build .radius/app.bicep --diagnostics-format sarif --stdout \
 python3 scripts/check.py "$out/app.json" --diagnostics "$out/app.sarif"
 ```
 
-Run the checker even when `bicep build` exits nonzero. Every compiler diagnostic
-and checker finding is a failure, and the compile must be warning-free.
-`check.py` returns `ALLOW` or `DENY` with a stable `signature`; repair a `DENY`
-and rerun, but stop when the signature repeats. A `checker-unusable` finding
-means validation could not run, not that the model itself is wrong. Run the
-script as shown and read its findings rather than its source; its rules are
-documented in [authoring.md](references/authoring.md).
+Run the checker even when `bicep build` exits nonzero. Exit codes understate
+failure: `bicep build` exits 0 on warnings, and both an unknown type or
+property on an extension type and a credential headed for deployment state are
+reported as warnings. The SARIF stream is the compiler's real verdict, which is
+why `--diagnostics` is required — without it a run could pass a model the
+compiler already objected to. Every diagnostic in it is a failure, the compile
+must be warning-free, and captured output that is not SARIF at all is itself a
+failure. `check.py` returns `ALLOW` or `DENY` with a stable `signature` that
+covers the findings themselves, not their wording, so fixing any finding moves
+it; repair a `DENY` and rerun, and stop when the signature repeats — the fix is
+not converging. A `checker-unusable` finding means validation could not run,
+not that the model itself is wrong. Run the script as shown and read its
+findings rather than its source; its rules are documented in
+[authoring.md](references/authoring.md).
 
 ## Deployment Profile and Acceptance Contract
 
@@ -102,21 +109,21 @@ Explicit profile-required resource, relationship, parameter, and app-native conf
 
 | Resource | Symbolic name |
 |---|---|
-| Application | `<shortName>App` where `<shortName>` is the app name without hyphens, camelCase (e.g., `todo-list-app` → `todoApp`) |
-| Container | `<serviceName>Container` — service short name camelCase; single-container apps use `<shortName>Container` (e.g., `todoContainer`) |
-| Container image | `<serviceName>Image` (e.g., `todoImage`) |
+| Application | `<shortName>App` where `<shortName>` is the app name without hyphens, camelCase (e.g., `example-app` → `exampleApp`) |
+| Container | `<serviceName>Container` — service short name camelCase; single-container apps use `<shortName>Container` (e.g., `exampleContainer`) |
+| Container image | `<serviceName>Image` (e.g., `exampleImage`) |
 | Data store (database/cache/queue) | `<engine>` + role suffix, camelCase: `mysqlDb`, `postgresDb`, `neo4jDb`, `redisCache`. Multiple of the same engine: prefix with the source store name (e.g., `ordersPostgresDb`) |
 | Data store secret | `<engine>Secret` when the type's schema requires `secretName`; app secrets use `appSecrets` |
-| Route | `<serviceName>Route` (e.g., `todoRoute`) |
+| Route | `<serviceName>Route` (e.g., `exampleRoute`) |
 
 ### Resource `name` properties (string values in Bicep)
 
 | Resource | Name value |
 |---|---|
-| Application | Repository name in kebab-case (e.g., `'todo-list-app'`) |
-| Container | Service name in kebab-case; single-container apps use the app name (e.g., `'todo-list-app'`) |
-| Container image | `'<service-name>-image'` (e.g., `'todo-list-app-image'`) |
-| Data store | `'<app-name>-<engine>'` in kebab-case (for example `'todo-list-app-mysql'`); multiple stores of the same engine include the source store name |
+| Application | Repository name in kebab-case (e.g., `'example-app'`) |
+| Container | Service name in kebab-case; single-container apps use the app name (e.g., `'example-app'`) |
+| Container image | `'<service-name>-image'` (e.g., `'example-app-image'`) |
+| Data store | `'<app-name>-<engine>'` in kebab-case (for example `'example-app-mysql'`); multiple stores of the same engine include the source store name |
 | Other backing resource | `'<app-name>-<role>'` in kebab-case (for example `'orders-api-events'`) |
 | Data store secret | `'<app-name>-<engine>-secret'` (when the schema requires `secretName`); app secrets `'<app-name>-secrets'` |
 
@@ -132,8 +139,8 @@ Explicit profile-required resource, relationship, parameter, and app-native conf
 |---|---|
 | Data store admin username | The administrator username you author for the provisioned database. Set it wherever the schema puts credentials — `username` on the resource, or `USERNAME` in the secret when the schema uses `secretName`. Use a simple provider-safe name such as `myadmin`; never copy a reserved source default such as `root` or `postgres` |
 | Data store `database` name | Derived from source (e.g., `MYSQL_DATABASE`/`POSTGRES_DB`, or the database segment of a connection string) |
-| Data store `version` | Derived from source (e.g., the image tag `mysql:8.0` → `'8.0'`) |
-| Container key in `containers` map | Service short name camelCase (single-container: derived from app, e.g., `todo`) |
+| Data store `version` | Derived from source (e.g., the image tag `mysql:8.0` → `'8.0'`); when the type does not offer the source's version, map it per rule 22 in [authoring.md](references/authoring.md) |
+| Container key in `containers` map | Service short name camelCase (single-container: derived from app, e.g., `example`) |
 | Port key in `ports` map | `web` for the primary HTTP port; additional ports derive from protocol/use (`http`, `grpc`) |
 | `build.source` for containerImages | Repo git URL pinned to the modeled checkout: `git::https://github.com/<org>/<repo>.git//<subdir>?ref=<40-char-commit-sha>` (`//<subdir>` only when the Dockerfile isn't at the repo root) |
 
