@@ -97,14 +97,14 @@ credential, port, and literal value from the repository being modeled.
 1. **Read only what the Recipe returns or the template sets.** Reading back a
    property this file itself sets on a resource (`mysqlDb.properties.database` when
    you wrote `database: 'appdb'`) is fine — the value is right there. A property
-   the Recipe is expected to populate must appear in
-   `assets/recipe-outputs.json`, which lists every property each Recipe actually
-   sets; one declared in the type schema but absent from that list resolves to
-   null at deploy time. PostgreSQL declares `port` and never sets it; use the
-   provider's fixed `5432` instead.
+   the Recipe is expected to populate must appear in the output contract that
+   `check.py` derives from the current upstream Azure AKS Recipe Pack; one
+   declared in the type schema but absent from that contract resolves to null at
+   deploy time. PostgreSQL declares `port` and never sets it; use the provider's
+   fixed `5432` instead.
 
-2. **Bind managed secrets by reference.** When `recipe-outputs.json` lists a
-   `secrets` entry, reach it through
+2. **Bind managed secrets by reference.** When the derived Recipe contract lists
+   a `secrets` entry, reach it through
    `valueFrom.secretKeyRef` with `secretName: <resource>.properties.secrets.name`
    and that exact key. Never write a placeholder string such as
    `'managedSecret:connectionString'`, and never read the key as a property.
@@ -273,11 +273,12 @@ credential, port, and literal value from the repository being modeled.
     `public`, and `azure_superuser`; PostgreSQL additionally refuses
     `postgres`, `azuresu`, `azure_pg_admin`, and any name starting with
     `pg_`; SQL Server refuses `sa` and other fixed logins.
-    `recipe-outputs.json` carries each type's exact names and reserved
-    prefixes. The common cases are exactly what a source derives — MySQL's
-    `root`, PostgreSQL's default `postgres` — so substitute a neutral admin
-    name such as `myadmin`, and pass the resource property (or the same
-    literal) to the application's user variable so the two cannot drift.
+    `check.py` applies these names and prefixes only when the Recipe's normalized
+    source exactly matches the corresponding Azure AVM database module. The
+    common cases are exactly what a source derives — MySQL's `root`,
+    PostgreSQL's default `postgres` — so substitute a neutral admin name such as
+    `myadmin`, and pass the resource property (or the same literal) to the
+    application's user variable so the two cannot drift.
 
 24. **Give backing resources application-scoped names.** The Radius resource
     `name` becomes the cloud resource's name, and many of those are globally
@@ -289,7 +290,7 @@ credential, port, and literal value from the repository being modeled.
 
 25. **Bind a published connection string; never compose one.** When the
     application reads a full connection string or URL and
-    `recipe-outputs.json` lists one as a managed secret (`url`,
+    the derived Recipe contract lists one as a managed secret (`url`,
     `connectionString`), bind that exact key with `secretKeyRef`. A string
     composed from `host` and `port` omits the credential the provider
     requires — Redis rejects it with NOAUTH — and invites reads of properties

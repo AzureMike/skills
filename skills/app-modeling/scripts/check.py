@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Validate compiled Radius models against the skill contract.
 
-Rules read only compiled ARM and recipe-outputs.json. They report deploy or
-runtime defects and ARM-checkable policy violations. Decisions that need
-source, image, profile, or intent stay in authoring.md.
+Rules read compiled ARM and the current Azure Recipe-pack contract. They report
+deploy or runtime defects and ARM-checkable policy violations. Decisions that
+need source, image, profile, or intent stay in authoring.md.
 
 A finding may be a defect or a policy violation in a model that would
 deploy and run, but it must be proven from these inputs. A fact a rule
@@ -14,9 +14,17 @@ type the contract does not cover — is skipped, never guessed at.
 import argparse
 import hashlib
 import json
+import os
+import shutil
+import ssl
+import subprocess
 import sys
+import tempfile
+from http.client import HTTPException
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 HEX = set("0123456789abcdef")
 DENY, ALLOW = "DENY", "ALLOW"
@@ -25,6 +33,15 @@ APP_KIND = "Radius.Core/applications"
 CONTAINER_KIND = "Radius.Compute/containers"
 IMAGE_KIND = "Radius.Compute/containerImages"
 SECRET_KIND = "Radius.Security/secrets"
+RECIPE_PACK_KIND = "Radius.Core/recipePacks"
+
+AZURE_RECIPE_PACK_URL = (
+    "https://raw.githubusercontent.com/radius-project/"
+    "resource-types-contrib/main/recipe-packs/azure/aks-recipepack.bicep"
+)
+RECIPE_FETCH_TIMEOUT = 30
+RECIPE_COMPILE_TIMEOUT = 120
+MAX_RECIPE_PACK_BYTES = 2 * 1024 * 1024
 
 # Nothing needs to consume a workload.
 WORKLOAD_KINDS = {
@@ -34,6 +51,52 @@ WORKLOAD_KINDS = {
 }
 
 SECURE_TYPES = {"securestring", "secureobject"}
+
+AZURE_RECIPE_CONSTRAINTS = {
+    "avm/res/db-for-my-sql/flexible-server": {
+        "reserved": {
+            "username": [
+                "azure_superuser",
+                "admin",
+                "administrator",
+                "root",
+                "guest",
+                "public",
+            ]
+        }
+    },
+    "avm/res/db-for-postgre-sql/flexible-server": {
+        "reserved": {
+            "username": [
+                "azure_superuser",
+                "azure_pg_admin",
+                "azuresu",
+                "postgres",
+                "admin",
+                "administrator",
+                "root",
+                "guest",
+                "public",
+            ]
+        },
+        "reservedPrefixes": {"username": ["pg_"]},
+    },
+    "avm/res/sql/server": {
+        "reserved": {
+            "username": [
+                "sa",
+                "admin",
+                "administrator",
+                "root",
+                "guest",
+                "public",
+                "dbmanager",
+                "loginmanager",
+                "dbo",
+            ]
+        }
+    },
+}
 
 
 def calls(text, name):
@@ -184,6 +247,207 @@ def properties_of(body):
         return {}
     inner = outer.get("properties")
     return inner if isinstance(inner, dict) else {}
+
+
+class RecipeContractError(Exception):
+    """An error that prevents the Recipe contract from being established."""
+
+    def __init__(self, source, reason):
+        super().__init__(reason)
+        self.source = source
+
+
+def recipe_source_key(source):
+    """Normalize an OCI Recipe source to its exact module path."""
+    if not isinstance(source, str):
+        return ""
+    source = source.removeprefix("br:")
+    source = source.split("@", 1)[0]
+    head, separator, tail = source.rpartition("/")
+    if ":" in tail:
+        tail = tail.split(":", 1)[0]
+        source = f"{head}{separator}{tail}"
+    if "/bicep/" in source:
+        return source.split("/bicep/", 1)[1]
+    return source.removeprefix("bicep/")
+
+
+def constrained_contract(source, outputs):
+    """Build one output contract and add exact-source Azure constraints."""
+    contract = {"source": source, "outputs": outputs}
+    constraints = AZURE_RECIPE_CONSTRAINTS.get(recipe_source_key(source), {})
+    for field, values in constraints.items():
+        contract[field] = {
+            name: list(entries) for name, entries in values.items()
+        }
+    return contract
+
+
+def recipe_contract_from_pack_arm(arm):
+    """Normalize compiled Recipe-pack ARM to the checker's contract shape."""
+    if not isinstance(arm, dict):
+        raise ValueError("compiled Recipe-pack ARM is not an object")
+    resources = arm.get("resources")
+    if isinstance(resources, dict):
+        bodies = resources.values()
+    elif isinstance(resources, list):
+        bodies = resources
+    else:
+        raise ValueError("compiled Recipe-pack ARM has no resources collection")
+
+    packs = []
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        kind = body.get("type")
+        if isinstance(kind, str) and kind.split("@", 1)[0] == RECIPE_PACK_KIND:
+            packs.append(body)
+    if not packs:
+        raise ValueError("compiled ARM has no Radius.Core/recipePacks resource")
+
+    contracts = {}
+    normalized_types = {}
+    for pack in packs:
+        recipes = properties_of(pack).get("recipes")
+        if not isinstance(recipes, dict):
+            raise ValueError("Recipe-pack properties.recipes is not an object")
+        for kind, recipe in recipes.items():
+            if not isinstance(kind, str) or not kind:
+                raise ValueError("Recipe-pack contains an invalid Recipe type")
+            if not isinstance(recipe, dict):
+                raise ValueError(f"{kind} Recipe definition is not an object")
+            outputs = recipe.get("outputs")
+            if outputs is None or outputs == {}:
+                continue
+            if not isinstance(outputs, dict):
+                raise ValueError(f"{kind}.outputs is not an object")
+            source = recipe.get("source")
+            if not isinstance(source, str) or not source:
+                raise ValueError(f"{kind}.source is not a non-empty string")
+
+            contract = constrained_contract(source, outputs)
+            key = kind.lower()
+            prior = normalized_types.get(key)
+            if prior is not None:
+                prior_kind, prior_contract = prior
+                if prior_contract != contract:
+                    raise ValueError(
+                        "conflicting Recipe definitions for "
+                        f"{prior_kind} and {kind}"
+                    )
+                continue
+            normalized_types[key] = (kind, contract)
+            contracts[kind] = contract
+    return {"types": contracts}
+
+
+def fetch_recipe_pack(
+    url=AZURE_RECIPE_PACK_URL,
+    timeout=RECIPE_FETCH_TIMEOUT,
+    max_bytes=MAX_RECIPE_PACK_BYTES,
+):
+    """Download the current Azure Recipe-pack Bicep with bounded I/O."""
+    request = Request(url, headers={"User-Agent": "radius-app-modeling-checker"})
+    try:
+        verify_paths = ssl.get_default_verify_paths()
+        system_bundle = Path("/etc/ssl/cert.pem")
+        if verify_paths.cafile is None and system_bundle.is_file():
+            context = ssl.create_default_context(cafile=system_bundle)
+        else:
+            context = ssl.create_default_context()
+        with urlopen(request, timeout=timeout, context=context) as response:
+            content = response.read(max_bytes + 1)
+    except (HTTPError, HTTPException, URLError, OSError) as error:
+        raise RecipeContractError(
+            url, f"the Azure Recipe Pack could not be downloaded: {error}"
+        ) from error
+    if len(content) > max_bytes:
+        raise RecipeContractError(
+            url,
+            f"the Azure Recipe Pack exceeds the {max_bytes}-byte download limit",
+        )
+    try:
+        source = content.decode("utf-8")
+    except UnicodeError as error:
+        raise RecipeContractError(
+            url, "the Azure Recipe Pack is not valid UTF-8"
+        ) from error
+    if not source.strip():
+        raise RecipeContractError(url, "the Azure Recipe Pack download is empty")
+    return source
+
+
+def find_bicep_config():
+    """Find the repository Bicep config used by the app-modeling workflow."""
+    for candidate in (
+        Path(".radius") / "bicepconfig.json",
+        Path("bicepconfig.json"),
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+    raise RecipeContractError(
+        ".radius/bicepconfig.json",
+        "no bicepconfig.json was found, so extension radius cannot be resolved",
+    )
+
+
+def compile_recipe_pack(source, config_path=None):
+    """Compile fetched Recipe-pack Bicep and return its normalized contract."""
+    config = Path(config_path).resolve() if config_path else find_bicep_config()
+    if not config.is_file():
+        raise RecipeContractError(
+            config, "the Bicep configuration needed for Recipe compilation is missing"
+        )
+    binary = (
+        os.environ.get("BICEP_BINARY")
+        or shutil.which("bicep")
+        or str(Path.home() / ".rad" / "bin" / "bicep")
+    )
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix=".recipe-contract-", dir=config.parent
+        ) as temporary:
+            pack = Path(temporary) / "recipe-pack.bicep"
+            pack.write_text(source)
+            try:
+                result = subprocess.run(
+                    [binary, "build", str(pack), "--stdout"],
+                    cwd=temporary,
+                    capture_output=True,
+                    text=True,
+                    timeout=RECIPE_COMPILE_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise RecipeContractError(
+                    AZURE_RECIPE_PACK_URL,
+                    "Bicep timed out while compiling the Azure Recipe Pack",
+                ) from error
+    except RecipeContractError:
+        raise
+    except (OSError, UnicodeError) as error:
+        raise RecipeContractError(
+            AZURE_RECIPE_PACK_URL,
+            f"the Azure Recipe Pack could not be compiled: {error}",
+        ) from error
+
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        if detail:
+            detail = detail[:1000]
+        else:
+            detail = f"bicep exited with status {result.returncode}"
+        raise RecipeContractError(
+            AZURE_RECIPE_PACK_URL,
+            f"the Azure Recipe Pack did not compile: {detail}",
+        )
+    try:
+        arm = json.loads(result.stdout)
+        return recipe_contract_from_pack_arm(arm)
+    except (ValueError, TypeError) as error:
+        raise RecipeContractError(
+            AZURE_RECIPE_PACK_URL,
+            f"the compiled Azure Recipe Pack is unusable: {error}",
+        ) from error
 
 
 def containers_of(properties):
@@ -840,6 +1104,11 @@ def load(path):
     return parsed if isinstance(parsed, dict) else None
 
 
+def read_recipe_contract():
+    """Derive the contract from the current Azure Recipe Pack."""
+    return compile_recipe_pack(fetch_recipe_pack())
+
+
 def contract_faults(recipes):
     """Return faults that would disable Recipe checks."""
     types = recipes.get("types")
@@ -890,7 +1159,7 @@ def unusable(path, reason):
     return [{"code": "checker-unusable", "path": str(path), "message": reason}]
 
 
-def findings_for(arm_path, recipes_path, diagnostics_path):
+def findings_for(arm_path, diagnostics_path):
     """Check the inputs, then return model findings."""
     try:
         compiler_output = diagnostics_path.read_text()
@@ -901,23 +1170,6 @@ def findings_for(arm_path, recipes_path, diagnostics_path):
             "the compiler diagnostics could not be read, so a warning-free "
             "build cannot be established; re-run bicep build with "
             "--diagnostics-format sarif and pass the file it writes.",
-        )
-
-    recipes = load(recipes_path)
-    if recipes is None:
-        # Recipe checks can't run without their contract.
-        return unusable(
-            recipes_path,
-            "the Recipe output contract is missing or unparseable, so the "
-            "model cannot be checked; restore assets/recipe-outputs.json.",
-        )
-    faults = contract_faults(recipes)
-    if faults:
-        return unusable(
-            recipes_path,
-            "the Recipe output contract is malformed, so the checks that read "
-            f"it would pass without testing anything ({'; '.join(faults[:5])}); "
-            "restore assets/recipe-outputs.json.",
         )
 
     arm = load(arm_path)
@@ -941,19 +1193,27 @@ def findings_for(arm_path, recipes_path, diagnostics_path):
         ]
         return findings
 
+    try:
+        recipes = read_recipe_contract()
+    except RecipeContractError as error:
+        return unusable(
+            error.source,
+            f"{error}, so the model's Recipe contract cannot be checked",
+        )
+    faults = contract_faults(recipes)
+    if faults:
+        return unusable(
+            AZURE_RECIPE_PACK_URL,
+            "the Recipe output contract is malformed, so the checks that read "
+            f"it would pass without testing anything ({'; '.join(faults[:5])})",
+        )
+
     return check(arm, recipes, compiler_output)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("arm", type=Path)
-    parser.add_argument(
-        "--recipes",
-        type=Path,
-        default=Path(__file__).resolve().parent.parent
-        / "assets"
-        / "recipe-outputs.json",
-    )
     parser.add_argument(
         "--diagnostics",
         type=Path,
@@ -962,7 +1222,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    result = make_result(findings_for(args.arm, args.recipes, args.diagnostics))
+    result = make_result(findings_for(args.arm, args.diagnostics))
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 1 if result["verdict"] == DENY else 0

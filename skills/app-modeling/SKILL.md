@@ -64,6 +64,15 @@ bicep build .radius/app.bicep --diagnostics-format sarif --stdout \
 python3 scripts/check.py "$out/app.json" --diagnostics "$out/app.sarif"
 ```
 
+Before checking the model, `check.py` downloads the current Azure AKS Recipe
+Pack from `radius-project/resource-types-contrib@main`, compiles it with the
+repository's `.radius/bicepconfig.json`, and derives the Recipe output contract
+in memory. It doesn't write the pack or its contract into the repository.
+Network, compilation, and contract errors return `checker-unusable`; there is
+no bundled fallback or local contract override. Because `main` is mutable, this
+check covers the current upstream Azure pack rather than an older or customized
+deployed Environment.
+
 Run the checker even when `bicep build` exits nonzero. Exit codes understate
 failure: `bicep build` exits 0 on warnings, and both an unknown type or
 property on an extension type and a credential headed for deployment state are
@@ -188,8 +197,9 @@ The following is the allow-list of predefined types this skill emits when one fi
 
 Do NOT invent properties on these types, and do NOT substitute one predefined type for another. When a backing service the application genuinely needs has NO matching type above, do not stop and do not force an ill-fitting type: generate a custom resource type under the `Radius.Resources` namespace, following [custom-resource-types.md](references/custom-resource-types.md), which is authoritative for the schema, extension, recipe, and recipe-pack flow (Azure scope for now).
 
-[recipe-outputs.json](assets/recipe-outputs.json) records what the predefined
-Recipes actually set, which can be narrower than the type schema.
+For predefined Azure types, `check.py` derives the outputs that Recipes actually
+set from the current upstream AKS Recipe Pack. This contract can be narrower
+than the type schema.
 
 ## Extension
 
