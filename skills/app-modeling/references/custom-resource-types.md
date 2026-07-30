@@ -1,49 +1,34 @@
 # Custom resource types (generated on demand)
 
-Use this when the application genuinely needs a backing service that has no
-matching type in the allow-list in [Resource types](../SKILL.md#resource-types).
-Rather than forcing an ill-fitting predefined type or stopping, generate a custom
-type so the application can still be modeled and deployed.
+Use this when the application genuinely needs a backing service that has NO matching type in the predefined allow-list in [Resource Type Resolution](../SKILL.md#resource-type-resolution). Instead of forcing an ill-fitting predefined type or stopping, generate a custom resource type so the application can still be modeled and deployed.
 
-Custom types are generated as part of modeling. Do not ask whether to generate
-one — decide from the source's actual dependency. The initial scope is backing
-services Radius can provision on **Azure**. If the service is not provisionable
-on Azure, do not invent a type: report the unsupported dependency and stop for
-that resource.
+Custom types are generated automatically as part of modeling. Do not ask the user whether to generate one; decide from the source's actual dependency. The initial scope is backing services that Radius can provision on **Azure**. If the required service is not provisionable on Azure, do NOT invent a type: report the unsupported dependency and stop for that resource.
 
-Every generated artifact lives in `.radius/`, beside `app.bicep` and
-`bicepconfig.json`. Publishing an extension or a recipe to a registry is an OCI
-push, not a git push.
+Every generated artifact lives in `.radius/`, co-located with `app.bicep` and `bicepconfig.json`, and is written and staged with the same behavior as the rest of the model (see the [Response](../SKILL.md#response) section). Publishing an extension or recipe to a registry is an OCI push, not a git push.
 
-Author every artifact from the templates below: copy the skeleton and fill only
-the marked `<placeholders>`. The surrounding structure, resource types, API
-versions, and wiring keys are fixed.
+Author every artifact from the templates below: copy the skeleton and fill only the marked `<placeholders>`. The surrounding structure, resource types, API versions, and wiring keys are fixed and must not be changed or renamed.
 
 ## When to generate a custom type
 
-All three must hold:
+Generate a custom type only when ALL of these hold:
 
-- The application requires the backing service to function.
-- No allow-list type fits. Do not stretch one to cover a different service.
+- The application requires a backing service (for example a specific Azure service) to function.
+- No type in the predefined allow-list fits that need. Do not stretch a predefined type to cover a different service.
 - The service is provisionable on Azure.
 
-Otherwise report the gap instead of generating anything.
+Otherwise, do not generate a type. Report the gap to the user.
 
 ## Namespace and naming
 
-- Custom types always use the `Radius.Resources` namespace. Do not invent other
-  namespaces and do not extend the predefined `Radius.*` ones.
-- The type name is a lowerCamelCase plural noun, for example
-  `Radius.Resources/azureServiceBusNamespaces`.
-- Declare only the properties the application actually reads or writes, plus the
-  base properties (`environment`, `application`) and the read-only outputs the
-  application consumes. Do not invent properties nothing uses.
+- Custom types ALWAYS use the `Radius.Resources` namespace. Do not invent other namespaces and do not extend the predefined `Radius.*` namespaces.
+- The type name is a lowerCamelCase plural noun for the resource, for example `Radius.Resources/azureServiceBusNamespaces`.
+- Define only the properties the application actually reads or writes, plus the Radius base properties (`environment`, `application`) and the read-only outputs the application consumes (host, endpoint, port, connection string, managed-secret name). Do NOT invent properties the application does not use.
 
-## 1. Author the schema: `.radius/custom-types.yaml`
+## Generation flow
 
-The manifest shape is fixed; only the type name and `properties` vary. Model it
-on an existing type such as `Data/mySqlDatabases/mySqlDatabases.yaml` in
-`resource-types-contrib`.
+### 1. Author the schema: `.radius/custom-types.yaml`
+
+The manifest shape is fixed; only the type name and the `properties` vary. Model it on an existing type such as `Data/mySqlDatabases/mySqlDatabases.yaml` in `resource-types-contrib`:
 
 ```yaml
 namespace: Radius.Resources
@@ -58,125 +43,111 @@ types:
           properties:
             environment:
               type: string
-              description: "(Required) The Radius Environment ID."
+              description: "(Required) The Radius Environment ID. Typically set by the rad CLI."
             application:
               type: string
               description: "(Optional) The Radius Application ID."
+            # Developer inputs the application sets:
             <inputProperty>:
               type: string            # or integer / boolean
               description: "(Required|Optional) ..."
             <secretInput>:
               type: string
-              x-radius-sensitive: true
+              x-radius-sensitive: true   # encrypted at rest, redacted on reads, decrypted only into the recipe
               description: "(Required) ..."
-            <readOnlyProperty>:
+            # Read-only outputs the application consumes (populated by the recipe):
+            host:
               type: string
               readOnly: true
-              description: "Mapped from the recipe's <moduleOutput> output."
-          required: [environment, <required inputs>]
+              description: "Mapped from the recipe's output."
+            port:
+              type: integer
+              readOnly: true
+              description: "Mapped from the recipe's output."
+          required: [environment, <required input properties>]
 ```
 
-- Developer inputs are plain typed properties. Use `enum: [...]` for a fixed set.
-- Mark every sensitive input or output `x-radius-sensitive: true`.
-- Read-only outputs set `readOnly: true` and are populated by the recipe. Never
-  list them in `required`.
-- One manifest may declare several types under `types:`.
+Rules:
+- Base properties `environment` (required) and `application` (optional) are always present.
+- Developer inputs are plain typed properties; use `enum: [...]` for a fixed value set.
+- Mark every sensitive input or sensitive output `x-radius-sensitive: true`.
+- Read-only outputs set `readOnly: true` and are populated by the recipe; do not list them in `required`.
+- A single manifest may declare multiple types under `types:`.
 
-A property declared `readOnly` but never mapped in step 4 compiles cleanly and
-arrives null at deploy time. This is the same defect
-[recipe-outputs.json](../assets/recipe-outputs.json) exists to prevent for
-predefined types, and for a custom type the mapping is the only record of it.
+### 2. Publish the extension locally: `rad bicep publish-extension`
 
-## 2. Publish the extension locally
+Compile the manifest into a local Bicep extension co-located with `app.bicep`:
 
-```sh
-rad bicep publish-extension --from-file .radius/custom-types.yaml \
-  --target .radius/custom-types.tgz
+```
+rad bicep publish-extension --from-file .radius/custom-types.yaml --target .radius/custom-types.tgz
 ```
 
-`--target` is a local file path, not an OCI reference, so the extension ships
-beside `app.bicep` and needs no registry, no cluster, and no network.
+`--target` is a local file path here (not an OCI reference), so the extension ships alongside `app.bicep` and needs no registry. Confirm the exact flags with `rad bicep publish-extension --help` in the session before running.
 
-## 3. Wire the extension into `.radius/bicepconfig.json`
+### 3. Wire the extension into `.radius/bicepconfig.json`
 
-Add an alias for the local tgz beside the existing `radius` alias, and keep
-`radius`:
+Add an alias for the local extension tgz next to the existing `radius` alias, for example an entry that points `customTypes` at `./custom-types.tgz`. Keep the `radius` extension. In `app.bicep`, declare `extension customTypes` in addition to `extension radius`.
 
-```json
-{
-  "experimentalFeaturesEnabled": { "extensibility": true },
-  "extensions": {
-    "radius": "br:biceptypes.azurecr.io/radius:<pinned-version>",
-    "customTypes": "./custom-types.tgz"
-  }
-}
-```
+### 4. Provide a recipe
 
-In `app.bicep`, declare `extension customTypes` in addition to
-`extension radius`. The generated extension enforces the schema authored in step
-1, so a misspelled property is a compile error naming the property it expected.
+A recipe is the module that actually provisions the resource; the recipe pack (step 5) points at it through a `source`. There are two ways to supply one. Prefer AVM.
 
-## 4. Provide a recipe
+#### 4a. AVM path (preferred, exact match only)
 
-The recipe provisions the resource; the recipe pack in step 5 points at it
-through a `source`. Prefer AVM.
-
-### 4a. AVM path (preferred, exact match only)
-
-An Azure Verified Module needs no authoring and no publishing. Reference it
-directly as the recipe pack `source`, pinned to a version:
+An Azure Verified Module needs NO authoring and NO publishing: reference the published module directly as the recipe pack entry's `source`, using its Microsoft Container Registry (MCR) path pinned to a specific version:
 
 ```
 source: 'mcr.microsoft.com/bicep/avm/res/<service>/<resource>:<x.y.z>'
 ```
 
-Use an AVM module only when a maintained module matches the required resource
-exactly. A loose or approximate match is not acceptable — author a recipe
-instead.
+For example `mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.10.3`. Use an AVM module only when a maintained module matches the required Azure resource exactly and can be pinned to a version. Do NOT use a loose or approximate match; if you are not confident it is an exact fit, author a recipe instead (4b). The module's inputs and outputs are wired through the recipe pack entry's `parameters` and `outputs` maps (step 5).
 
-### 4b. Authored recipe (fallback): `.radius/<type>-recipe.bicep`
+Do NOT guess the module's parameter or output names. Verify them against the module's real interface: an existing recipe pack that already uses the same AVM module (in `resource-types-contrib/recipepack/azure/`) or the module's published spec. Use the exact output names the module emits (for example the AVM `service-bus/namespace` module emits `primaryConnectionString`, not an invented name like `serviceBusConnectionString`), set the parameters the module requires (such as the SKU), and set auth-relevant parameters the connection depends on (for example `disableLocalAuth: false` when the output is a shared-access connection string). Pin the exact version whose interface you verified: if you confirmed the parameter and output names from a recipe pack that pins `:x.y.z`, pin `:x.y.z`, not a different version (an older or newer module may rename parameters or outputs).
 
-A recipe takes a single `context` object and returns a `result` object with
-exactly three maps. Model it on an existing recipe such as
-`Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep`.
+#### 4b. Authored recipe (fallback): `.radius/<type>-recipe.bicep`
+
+When no AVM module fits, author a Bicep recipe. A recipe takes a single `context` object and returns a `result` object with exactly three maps. Model it on an existing recipe such as `Data/mySqlDatabases/recipes/kubernetes/bicep/kubernetes-mysql.bicep`:
 
 ```bicep
 @description('Information about what resource is calling this Recipe. Generated by Radius.')
 param context object
 
+// Read developer inputs from the calling resource:
 var <input> = context.resource.properties.<inputProperty>
 
-// ...provision the Azure resource(s) here...
+// ...provision the Azure resource(s) here. Declare whatever provider extension or
+// AVM modules the provisioning needs; model the body on an existing recipe...
 
 output result object = {
+  // Radius resource IDs of everything this recipe provisioned:
   resources: [
     '<provisioned resource id>'
   ]
+  // Non-secret read-only outputs, keyed by the type's property names:
   values: {
-    <readOnlyProperty>: <...>
+    host: <...>
+    port: <...>
   }
+  // Sensitive outputs, keyed by the type's sensitive property names:
   secrets: {
-    <sensitiveProperty>: <...>
+    connectionString: <...>
   }
 }
 ```
 
-Publish it to the container registry for the repository being modeled:
+Then publish it to the user's GitHub Container Registry for the repository being modeled and use that path as the recipe pack `source`:
 
-```sh
-rad bicep publish --file .radius/<type>-recipe.bicep \
-  --target br:ghcr.io/<owner>/<repo>/<recipe>:<tag>
+```
+rad bicep publish --file .radius/<type>-recipe.bicep --target br:ghcr.io/<owner>/<repo>/<recipe>:<tag>
 ```
 
-- `<owner>/<repo>` is the repository being modeled.
-- Pin an immutable `<tag>`. Never publish `latest`.
-- The push needs a prior registry login with push permission. If it is not
-  authorized, stop and report it rather than guessing credentials.
+- `<owner>/<repo>` is the repository being modeled; the session's GitHub credentials are used for the push.
+- Pin an immutable `<tag>`; do not publish `latest`.
+- OCI publishing requires a prior registry login (`docker login ghcr.io` or equivalent) with push permission. If the push is not authorized, stop and report it rather than guessing credentials.
 
-## 5. Author the recipe pack: `.radius/custom-recipe-pack.bicep`
+### 5. Author the recipe pack: `.radius/custom-recipe-pack.bicep`
 
-The pack registers the recipe for the type. Its `recipes` map is keyed by the
-full type name. Model it on `recipepack/azure/aks-recipepack.bicep`.
+The recipe pack registers the recipe for the custom type. It is a `Radius.Core/recipePacks` resource whose `recipes` map is keyed by the full type name. Model it on `recipepack/azure/aks-recipepack.bicep` in `resource-types-contrib`:
 
 ```bicep
 extension radius
@@ -189,11 +160,13 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
         kind: 'bicep'
         source: '<MCR AVM path from 4a, or ghcr path from 4b>'
         parameters: {
+          // Map the module's inputs from the calling resource via {{context}} templating:
           name: '{{context.resource.name}}'
           <moduleParam>: '{{context.resource.properties.<inputProperty>}}'
         }
         outputs: {
-          <readOnlyProperty>: '<moduleOutputName>'
+          // Rename the module's outputs to the type's read-only property names:
+          host: '<moduleOutputName>'
           secrets: {
             <sensitiveProperty>: '<moduleSecretOutputName>'
           }
@@ -204,50 +177,35 @@ resource pack 'Radius.Core/recipePacks@2025-08-01-preview' = {
 }
 ```
 
-- `parameters` values use Radius `{{context.resource...}}` templating, not Bicep
-  expressions. This is how developer inputs reach the module.
-- `outputs` maps recipe outputs to the type's `readOnly` property names.
-  Non-secret outputs sit at the top level, sensitive ones under `secrets`. This
-  shape is deliberately different from an authored recipe's own return value in
-  4b, which is `output result object = { resources, values, secrets }`.
-- An authored recipe already returns `values`/`secrets` keyed by the type's
-  property names, so its mapping is usually the identity and can be omitted. An
-  AVM module needs a real mapping because its output names differ, for example
-  `host: 'fqdn'`.
-- Never inline a per-type recipe in `app.bicep`. Registering the pack on the
-  Environment is a deployment concern; modeling only writes the file.
+Notes:
+- `parameters` values use Radius `{{context.resource...}}` templating (not Bicep expressions); this is how developer inputs reach the module. For an AVM module, include every parameter the module requires plus any that affect the outputs you consume (for example set `disableLocalAuth: false` when reading a shared-access connection string).
+- `outputs` maps the recipe's outputs to the type's `readOnly` property names. Non-secret outputs are mapped at the top level of `outputs` (`<typeProperty>: '<moduleOutputName>'`), and sensitive outputs go under the nested `secrets` map. Use the module's actual output names (verify them, do not guess). This recipe-pack mapping shape is deliberately different from an authored recipe's own return value in 4b, which is `output result object = { resources, values, secrets }`.
+- An authored recipe (4b) already returns `values`/`secrets` keyed by the type's property names, so in the recipe pack its `outputs` mapping is usually the identity (and can be omitted); an AVM module (4a) needs a real mapping because its output names differ (for example `host: 'fqdn'`).
+- Do NOT fabricate a per-type singleton recipe inline in `app.bicep`; the recipe pack is how the type is resolved at deploy time. Registering the pack on the target Environment is a deployment concern (see the radius-deploy flow); modeling only writes the pack file.
 
-## 6. Reference the type in `app.bicep`
+### 6. Reference the type in `app.bicep`
 
-Use `Radius.Resources/<typeNamePlural>@2025-08-01-preview` and wire it to the
-workloads like any other backing service. Connections, environment projection,
-and secret handling follow [authoring.md](authoring.md).
-
-A connection injects `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>` for the
-connected resource's properties, and a generated type gets that behavior for
-free, so hand-written env vars carrying the same values are duplication.
+Use the custom type as `Radius.Resources/<typeNamePlural>@2025-08-01-preview`
+and wire it to workloads like any other backing service. Connections,
+environment projection, and secret handling follow
+[authoring.md](authoring.md).
 
 ## Artifacts (all in `.radius/`)
 
-- `custom-types.yaml` — the schema, namespace `Radius.Resources`.
+- `custom-types.yaml` — the resource-type schema (namespace `Radius.Resources`).
 - `custom-types.tgz` — the locally published Bicep extension.
-- `bicepconfig.json` — updated to alias that extension.
-- `custom-recipe-pack.bicep` — the `Radius.Core/recipePacks` mapping.
-- `<type>-recipe.bicep` — only when 4a was not used.
+- `bicepconfig.json` — updated to alias the local custom-types extension.
+- `custom-recipe-pack.bicep` — the `Radius.Core/recipePacks` resource mapping the type to its recipe.
+- `<type>-recipe.bicep` — the authored recipe, only when the AVM path (4a) is not used.
 
-## Verify
+## Validation
 
-Everything through step 6 runs offline. Only the 4b registry push and the deploy
-touch anything outside `.radius/`.
-
-- `app.bicep` compiles with both the `radius` and custom-types extensions, and
-  the compile plus `check.py` run in [authoring.md](authoring.md) still applies
-  unchanged — a custom resource nothing consumes is reported the same way, and
-  a workload that consumes a `Radius.Resources/*` resource without declaring a
-  connection to it is denied exactly like a predefined backing service.
-- Every artifact above exists in `.radius/`.
-- The pack `source` resolves: a pinned MCR AVM path, or a GHCR path that was
-  actually published.
-- `parameters` cover the module's required inputs, and `outputs` map every
-  `readOnly` property of the type, sensitive ones under `secrets`.
-- The type is Azure-provisionable. A non-Azure need was reported, not invented.
+- `app.bicep` compiles with both extensions and the
+  [compile-and-check loop](../SKILL.md#compile-and-check) returns `ALLOW`. Every
+  custom resource is consumed by a workload, and that workload declares a
+  connection to it.
+- `custom-types.yaml`, `custom-types.tgz`, and `custom-recipe-pack.bicep` exist in `.radius/`, plus `<type>-recipe.bicep` when one was authored.
+- The recipe pack `source` resolves: a pinned MCR AVM path (4a), or a GHCR path that was actually published (4b).
+- The recipe pack `parameters` cover the module's required inputs (via `{{context}}`), and `outputs` map every `readOnly` property of the type (sensitive ones under `secrets`).
+- An authored recipe returns `output result object = { resources, values, secrets }`, with `values` and `secrets` keyed by the type's property names.
+- The generated type is Azure-provisionable. A non-Azure need was reported, not invented.
