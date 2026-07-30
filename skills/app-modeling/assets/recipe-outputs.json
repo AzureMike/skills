@@ -37,6 +37,9 @@
       "outputs": {
         "host": "fqdn"
       },
+      "reserved": {
+        "username": ["azure_superuser", "admin", "administrator", "root", "guest", "public"]
+      },
       "source": "mcr.microsoft.com/bicep/avm/res/db-for-my-sql/flexible-server:0.10.3"
     },
     "Radius.Messaging/rabbitMQ": {
@@ -80,11 +83,20 @@
       "outputs": {
         "host": "fqdn"
       },
+      "reserved": {
+        "username": ["azure_superuser", "azure_pg_admin", "azuresu", "postgres", "admin", "administrator", "root", "guest", "public"]
+      },
+      "reservedPrefixes": {
+        "username": ["pg_"]
+      },
       "source": "mcr.microsoft.com/bicep/avm/res/db-for-postgre-sql/flexible-server:0.15.2"
     },
     "Radius.Data/sqlServerDatabases": {
       "outputs": {
         "host": "fullyQualifiedDomainName"
+      },
+      "reserved": {
+        "username": ["sa", "admin", "administrator", "root", "guest", "public", "dbmanager", "loginmanager", "dbo"]
       },
       "source": "mcr.microsoft.com/bicep/avm/res/sql/server:0.21.4"
     },

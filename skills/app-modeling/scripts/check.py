@@ -508,6 +508,64 @@ def check_recipe_outputs(model, report):
                     )
 
 
+def check_reserved_values(model, report):
+    # The contract lists values and prefixes the provider rejects.
+    for symbol in sorted(model.resources):
+        contract = model.contract(symbol)
+        if not contract:
+            continue
+        properties = model.properties(symbol)
+        reserved = mapping(contract.get("reserved"))
+        prefixes = mapping(contract.get("reservedPrefixes"))
+        fields = sorted(
+            name
+            for name in set(reserved) | set(prefixes)
+            if isinstance(name, str)
+        )
+        for name in fields:
+            value = resolve(properties.get(name), model.variables)
+            if not isinstance(value, str):
+                continue
+            banned = reserved.get(name)
+            banned = banned if isinstance(banned, list) else []
+            banned_prefixes = prefixes.get(name)
+            banned_prefixes = (
+                banned_prefixes if isinstance(banned_prefixes, list) else []
+            )
+            folded = value.casefold()
+            exact = next(
+                (
+                    item
+                    for item in banned
+                    if isinstance(item, str) and item and folded == item.casefold()
+                ),
+                None,
+            )
+            prefix = next(
+                (
+                    item
+                    for item in banned_prefixes
+                    if isinstance(item, str)
+                    and item
+                    and folded.startswith(item.casefold())
+                ),
+                None,
+            )
+            if exact is None and prefix is None:
+                continue
+            restriction = (
+                "is reserved by the provider"
+                if exact is not None
+                else f"starts with provider-reserved prefix {prefix!r}"
+            )
+            report(
+                "reserved-property-value",
+                f"{symbol}.{name}",
+                f"{name} {value!r} {restriction}, so the deployment is "
+                "rejected; use a neutral value instead.",
+            )
+
+
 def check_authored_secrets(model, report):
     # Authored secrets can't copy Recipe outputs or compose secure parameters.
     for symbol, properties in model.of_kind(SECRET_KIND):
@@ -729,6 +787,7 @@ RULES = (
     check_resource_shapes,
     check_application_count,
     check_recipe_outputs,
+    check_reserved_values,
     check_authored_secrets,
     check_build_source,
     check_connections,
@@ -805,6 +864,24 @@ def contract_faults(recipes):
                 ]
             elif not (isinstance(value, str) and value):
                 faults.append(f"{kind}.outputs.{name} is not a non-empty string")
+        for field in ("reserved", "reservedPrefixes"):
+            constraints = contract.get(field)
+            if constraints is None:
+                continue
+            # Malformed metadata must fail loudly, not skip the check.
+            if not isinstance(constraints, dict):
+                faults.append(f"{kind}.{field} is not an object")
+                continue
+            for name, banned in sorted(constraints.items()):
+                if not (
+                    isinstance(banned, list)
+                    and banned
+                    and all(isinstance(b, str) and b for b in banned)
+                ):
+                    faults.append(
+                        f"{kind}.{field}.{name} is not a non-empty list of "
+                        "non-empty strings"
+                    )
     return faults
 
 

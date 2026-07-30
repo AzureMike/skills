@@ -79,7 +79,10 @@ If no Dockerfile is present, stop before writing anything and return only:
    to. Every diagnostic in the SARIF is a failure — the compile must be
    warning-free, and output that is not SARIF at all is itself a failure.
    `check.py` reads the compiled ARM JSON and returns `ALLOW` or `DENY` with a
-   stable `signature`. Every finding is a provable defect: repair it and re-run.
+   stable `signature`. Run it exactly as shown and read its findings — do not
+   read the script itself; every rule it enforces is already stated in
+   [authoring.md](references/authoring.md). Every finding is a provable
+   defect: repair it and re-run.
    The `signature` covers the findings themselves, not their wording, so fixing
    any one of them moves it — if it repeats after a repair, the fix is not
    converging, so stop and report it. A `checker-unusable` finding means the
@@ -173,7 +176,9 @@ must resolve through `.radius/bicepconfig.json`.
 1. Write `.radius/app.bicep` and `.radius/bicepconfig.json` to the current
    working branch, creating the branch first if it does not exist. Touch no
    other file.
-2. Commit both, and push when a remote is configured.
+2. Commit both, and push when a remote is configured. If the push is rejected
+   for authentication or authorization, stop and report the committed branch —
+   do not attempt credential setup.
 3. Reply with a one-line intro naming the app, then a short summary of the
    resources identified, any judgment call worth flagging (profile choice, a
    `#disable-next-line` justification), and any unsupported component. Keep

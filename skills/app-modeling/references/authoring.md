@@ -245,6 +245,46 @@ credential, port, and literal value from the repository being modeled.
     `@description` decorators. The one exception is a functional
     `#disable-next-line` directive per rule 20.
 
+22. **Choose an unsupported service version deterministically.** The type's
+    version enum is the Recipe's contract. When the source pins a version the
+    type does not offer, set the highest supported version that does not exceed
+    the source's. When every supported version is newer, use the lowest one only
+    when the repository proves that its protocol, TLS, and authentication remain
+    compatible (rule 16); otherwise the predefined type does not fit, so
+    generate a custom type (rule 18). Name either substitution in the summary,
+    flagging the newer-server case as a compatibility risk. Do not pick a
+    version by taste — two runs over the same repository must produce the same
+    model.
+
+23. **Never use a provider-reserved admin username.** A backing resource's
+    `username` becomes the cloud database's admin login, and providers reject
+    reserved names: Azure refuses `root`, `admin`, `administrator`, `guest`,
+    `public`, and `azure_superuser`; PostgreSQL additionally refuses
+    `postgres`, `azuresu`, `azure_pg_admin`, and any name starting with
+    `pg_`; SQL Server refuses `sa` and other fixed logins.
+    `recipe-outputs.json` carries each type's exact names and reserved
+    prefixes. The common cases are exactly what a source derives — MySQL's
+    `root`, PostgreSQL's default `postgres` — so substitute a neutral admin
+    name such as `myadmin`, and pass the resource property (or the same
+    literal) to the application's user variable so the two cannot drift.
+
+24. **Give backing resources application-scoped names.** The Radius resource
+    `name` becomes the cloud resource's name, and many of those are globally
+    scoped — Service Bus namespaces, Redis Enterprise clusters, and
+    flexible-server DNS labels. A bare service name (`redis`, `rabbitmq`,
+    `mysql`) collides with any other deployment that picked the same one and
+    fails with NameInUse. Prefix the application name (`<app>-redis`,
+    `<app>-mysql`), keeping the kebab-case rule.
+
+25. **Bind a published connection string; never compose one.** When the
+    application reads a full connection string or URL and
+    `recipe-outputs.json` lists one as a managed secret (`url`,
+    `connectionString`), bind that exact key with `secretKeyRef`. A string
+    composed from `host` and `port` omits the credential the provider
+    requires — Redis rejects it with NOAUTH — and invites reads of properties
+    the Recipe never sets (PostgreSQL `port`, rule 1). Composing one that
+    embeds a secret also violates rule 5.
+
 ## Verify
 
 Run the compile and check from step 5 of [SKILL.md](../SKILL.md#workflow). The
