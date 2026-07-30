@@ -146,17 +146,22 @@ credential, port, and literal value from the repository being modeled.
    with mechanism `PLAIN` and username `$ConnectionString`.
 
 10. **Declare a connection for every resource a workload consumes.** A
-    connection is the only thing that creates the application-graph edge, and
-    the only thing that binds cloud RBAC. Bicep already orders the deployment,
-    so nothing fails at deploy time to tell you it is missing — the topology is
-    just permanently wrong. Radius injects `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`
+    connection records the application-graph relationship this skill requires
+    for every consumed backing resource. A direct resource reference already
+    creates a deployment dependency edge and orders the resources; it is not a
+    substitute for that relationship, and nothing fails at deploy time to tell
+    you the connection is missing — the topology is just permanently wrong.
+    By default Radius injects `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`
     into the container for each non-sensitive property of the connected
-    resource. Sensitive values are redacted on read and are **not** injected:
-    bind those with `secretKeyRef` against `<resource>.properties.secrets.name`.
-    So a resource with a secret needs both the connection and the explicit
-    binding. Never hand-write a `CONNECTION_*` variable for a resource you have
-    not connected — the application reads the whole set, and forging one member
-    of it supplies one and silently omits the rest.
+    resource; `disableDefaultEnvVars` on the connection entry suppresses that
+    injection. Connection-driven cloud RBAC applies only for supported IAM
+    relationship kinds, not every portable-resource connection. Sensitive
+    values are redacted on read and are **not** injected: bind those with
+    `secretKeyRef` against `<resource>.properties.secrets.name`. So a resource
+    with a secret needs both the connection and the explicit binding. Never
+    hand-write a `CONNECTION_*` variable for a resource you have not connected
+    — the application reads the whole set, and forging one member of it
+    supplies one and silently omits the rest.
 
 11. **`command` replaces the image ENTRYPOINT and `args` replaces its CMD.**
     Setting one and not the other silently drops the rest of the original

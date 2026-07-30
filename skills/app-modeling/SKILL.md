@@ -63,18 +63,27 @@ If no Dockerfile is present, stop before writing anything and return only:
 5. **Compile and check.**
 
    ```sh
+   out=$(mktemp -d)
    bicep build .radius/app.bicep --diagnostics-format sarif --stdout \
-     > /tmp/app.json 2> /tmp/app.sarif
-   python3 scripts/check.py /tmp/app.json --diagnostics /tmp/app.sarif
+     > "$out/app.json" 2> "$out/app.sarif"
+   python3 scripts/check.py "$out/app.json" --diagnostics "$out/app.sarif"
    ```
+
+   Use a fresh directory rather than fixed `/tmp` paths: two runs sharing
+   `/tmp/app.json` would check each other's output.
 
    `bicep build` exits 0 on a warning, and both an unknown type or property and
    a credential headed for deployment state are reported as warnings, so the
-   diagnostics have to be captured and passed in. Every diagnostic in the SARIF
-   is a failure — the compile must be warning-free. `check.py` reads the
-   compiled ARM JSON and returns `ALLOW` or `DENY` with a stable `signature`.
-   Every finding is a provable defect: repair it and re-run. If the `signature`
-   repeats after a repair, the fix is not converging — stop and report it.
+   diagnostics have to be captured and passed in. `--diagnostics` is therefore
+   required: without it a run could pass a model the compiler already objected
+   to. Every diagnostic in the SARIF is a failure — the compile must be
+   warning-free, and output that is not SARIF at all is itself a failure.
+   `check.py` reads the compiled ARM JSON and returns `ALLOW` or `DENY` with a
+   stable `signature`. Every finding is a provable defect: repair it and re-run.
+   The `signature` covers the findings themselves, not their wording, so fixing
+   any one of them moves it — if it repeats after a repair, the fix is not
+   converging, so stop and report it. A `checker-unusable` finding means the
+   checker could not run at all rather than that the model is wrong.
 
 Decide every modeling ambiguity from the evidence. The pull request in
 [Response](#response) is the only confirmation to ask for.
