@@ -17,23 +17,23 @@ param environment string
 param dbPassword string
 
 resource app 'Radius.Core/applications@2025-08-01-preview' = {
-  name: 'todo-list-app'
+  name: 'example-app'
   properties: { environment: environment }
 }
 
 resource db 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-  name: 'mysql'
+  name: 'example-app-mysql'
   properties: {
     environment: environment
     application: app.id
-    database: 'todos'
+    database: 'appdb'
     username: 'myadmin'
     password: dbPassword
   }
 }
 
 resource cache 'Radius.Data/redisCaches@2025-08-01-preview' = {
-  name: 'cache'
+  name: 'example-app-cache'
   properties: {
     environment: environment
     application: app.id
@@ -41,7 +41,7 @@ resource cache 'Radius.Data/redisCaches@2025-08-01-preview' = {
 }
 
 resource image 'Radius.Compute/containerImages@2025-08-01-preview' = {
-  name: 'todo-image'
+  name: 'example-app-image'
   properties: {
     environment: environment
     application: app.id
@@ -53,12 +53,12 @@ resource image 'Radius.Compute/containerImages@2025-08-01-preview' = {
 }
 
 resource web 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'todo-list-app'
+  name: 'example-app'
   properties: {
     environment: environment
     application: app.id
     containers: {
-      todo: {
+      web: {
         image: image.properties.imageReference
         ports: { web: { containerPort: 3000 } }
         env: {
@@ -93,7 +93,7 @@ credential, port, and literal value from the repository being modeled.
 
 1. **Read only what the Recipe returns or the template sets.** Reading back a
    property this file itself sets on a resource (`db.properties.database` when
-   you wrote `database: 'todos'`) is fine — the value is right there. A property
+   you wrote `database: 'appdb'`) is fine — the value is right there. A property
    the Recipe is expected to populate must appear in
    `assets/recipe-outputs.json`, which lists every property each Recipe actually
    sets; one declared in the type schema but absent from that list resolves to
@@ -121,7 +121,11 @@ credential, port, and literal value from the repository being modeled.
    string whose format the source already accepts. When the application composes
    at runtime: a credential embedded in a URL must be URL-encoded and shell
    expansion is not encoding, and Kubernetes `$(VAR)` expansion sees only
-   environment variables declared earlier in the map.
+   environment variables declared earlier in the map. `$(VAR)` also expands
+   before the process starts, so expanding a secret-valued variable into
+   `command` or `args` prints the secret in the pod's process list — prefer the
+   application's env-native settings, and reach for a `$(VAR)` flag only when no
+   env-native setting exists.
 
 6. **Pin the build to an immutable ref.** `build.source` must carry
    `?ref=<40-char commit sha>`. Never `main`, `edge`, or `latest`. Set `tag` to
@@ -195,7 +199,11 @@ credential, port, and literal value from the repository being modeled.
 
 17. **Starting is not working.** A container that boots into a login screen,
     placeholder config, or empty pipeline is not modeled. The selected profile's
-    primary feature has to be reachable without manual setup.
+    primary feature has to be reachable without manual setup. An image that
+    ships an authentication gate or first-run setup wizard needs that surface
+    configured from its documented settings — disable it when the profile does
+    not need it, or provision its credentials — so the first request lands in
+    the working application, not on a setup screen.
 
 18. **Model the service the application exists to operate on.** A UI for Kafka
     needs a Kafka cluster; a SQL client needs a database; a pipeline needs its
