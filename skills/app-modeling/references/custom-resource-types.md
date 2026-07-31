@@ -1,10 +1,10 @@
 # Custom resource types (generated on demand)
 
-Use this when the application genuinely needs a backing service that has NO matching type in the predefined allow-list in [Resource Type Resolution](../SKILL.md#resource-type-resolution). Instead of forcing an ill-fitting predefined type or stopping, generate a custom resource type so the application can still be modeled and deployed.
+Use this when the application genuinely needs a backing service that has NO matching type in the predefined catalog in [Type and Recipe resolution](authoring.md#type-and-recipe-resolution). Instead of forcing an ill-fitting predefined type or stopping, generate a custom resource type so the application can still be modeled and deployed.
 
 Custom types are generated automatically as part of modeling. Do not ask the user whether to generate one; decide from the source's actual dependency. The initial scope is backing services that Radius can provision on **Azure**. If the required service is not provisionable on Azure, do NOT invent a type: report the unsupported dependency and stop for that resource.
 
-Every generated artifact lives in `.radius/`, co-located with `app.bicep` and `bicepconfig.json`, and is written and staged with the same behavior as the rest of the model (see the [Response](../SKILL.md#response) section). Publishing an extension or recipe to a registry is an OCI push, not a git push.
+Every generated artifact lives in `.radius/`, co-located with `app.bicep` and `bicepconfig.json`, and is written and staged with the same behavior as the rest of the model (see [Response and output](../SKILL.md#response-and-output)). Publishing an extension or recipe to a registry is an OCI push, not a git push.
 
 Author every artifact from the templates below: copy the skeleton and fill only the marked `<placeholders>`. The surrounding structure, resource types, API versions, and wiring keys are fixed and must not be changed or renamed.
 

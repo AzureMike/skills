@@ -1,76 +1,402 @@
 # Authoring a Radius app.bicep
 
-Write `.radius/app.bicep` and `.radius/bicepconfig.json`, plus the generated
-artifacts under `.radius/` when
-[custom-resource-types.md](custom-resource-types.md) requires them. Touch no
-file outside `.radius/`.
+This file is the detailed policy for a generated Radius model. Write only
+`.radius/app.bicep`, `.radius/bicepconfig.json`, and artifacts required by
+[custom-resource-types.md](custom-resource-types.md). Do not change a parent
+configuration or any other repository file.
 
-The Bicep compiler already enforces resource shapes: property names, object maps
-versus arrays, and required fields. Do not memorize those. Compile, read the
-errors, and fix them. This file covers only what a clean compile cannot prove.
+The compiler checks Bicep syntax and resource shape. `check.mjs` checks the
+compiled model. Source evidence and the rules here establish that the selected
+application can actually run.
 
-## Shape
+## Repository exploration and profile choice
+
+Repository exploration establishes one complete path from input to observable
+result and determines what the application needs. Type and Recipe resolution
+then tests whether Radius can provide it.
+
+1. **Acceptance criteria.** The request, scenario, and target-repository
+   requirements define an acceptable result. They may specify types, resource
+   names or parameters, workload roles and counts, native configuration keys,
+   secret bindings, provider profiles, protocol values, and connection names.
+   These are requirements, not proof that the source supports them. If the
+   pinned revision cannot meet one, report the conflict instead of choosing an
+   easier default or inventing compatibility.
+2. **Deployment entry points.** The search starts with the relevant Dockerfile
+   and the production manifests, Compose or Helm files, deployment scripts, and
+   startup files at the pinned revision. These establish the build context,
+   deployment units, processes, commands, ports, and configuration files worth
+   tracing. In a monorepo, stay within that deployment path unless a runtime
+   reference crosses into another service.
+3. **One candidate profile.** Among profiles that meet the acceptance criteria,
+   prefer production deployment assets, then a matching quickstart, then a
+   complete repository example, and use defaults last. When sources disagree,
+   the files used by the selected build and startup path take precedence. Never
+   combine settings or services from different profiles or source revisions.
+   The chosen profile must perform the application's primary operation without
+   manual setup. Reject a health or metrics-only process, a login or setup
+   screen, placeholder configuration, empty pipeline, idle process, or any path
+   that still needs feature-critical configuration after deployment. Every
+   service used by the chosen profile is required, while an installed package,
+   optional extra, test, adapter, or unselected example does not add a
+   dependency.
+4. **Runtime trace.** Follow each startup command into the configuration reads
+   and client initialization it uses. For every selected workload, extract the
+   image and build context, command and arguments, listeners and ports,
+   environment and config parsing, secrets, writable and persistent paths,
+   dependencies, protocol, TLS, authentication, bootstrap, backend choice, and
+   feature flags. Inspect structured configuration and command-line flags as
+   well as environment variables. Follow migrations, seed data, identities,
+   and protocol surfaces when the primary operation depends on them.
+5. **Completeness proof.** Keep a private note that follows one trigger or input
+   through every role and required backing resource to an observable result.
+   Link each acceptance criterion and planned property reference to its source
+   evidence, the workload setting that consumes it, and, during type
+   resolution, the exact schema or Recipe field. Do not print this note or add
+   it to Bicep. Model only workloads and services supported by this evidence,
+   and make every declared resource serve a workload in the trace.
+6. **Stopping condition.** Exploration ends when the trace is complete and the
+   pinned source supports every acceptance criterion. Unrelated files and
+   unselected profiles need no further investigation. If no complete profile
+   exists, report that boundary instead of returning a partial model. When
+   several complete profiles remain, choose the best documented one with exact
+   type and Recipe support, state the choice in the summary, and do not ask a
+   modeling question the evidence can answer.
+
+A complete profile must also meet the applicable behavior:
+
+| Behavior | What makes the profile complete |
+|---|---|
+| Proxy, gateway, or router | A configured, reachable upstream with the required authentication. A metadata store alone is insufficient. |
+| Management client or explorer | A configured target service, including backend choice, subresource, TLS, and authentication. An internal metadata store is not that target. |
+| Pipeline, worker, or event processor | A real input, the processing path, and a real output. Diagnostics or stdout alone do not qualify unless the source defines them as production behavior. |
+| File or content service | The primary protocol listens, noninteractive identity or bootstrap exists, and writable persistent storage is ready. |
+| Stateful web service or API | Its required stores, migration or bootstrap, credentials, and feature-enabling settings are configured. |
+
+Exact service choice, provider profile, deployment names, and secret names or
+keys are sometimes unknowable from source alone. The explicit request and
+target contracts decide those cases.
+
+## Type and Recipe resolution
+
+Use the exact predefined Radius type when it fits. Do not substitute a similar
+type or invent properties. The predefined types this skill may emit are:
+
+| Need | Type |
+|---|---|
+| Application grouping | `Radius.Core/applications@2025-08-01-preview` |
+| Container image and workload | `Radius.Compute/containerImages`, `Radius.Compute/containers` |
+| MySQL, PostgreSQL, Neo4j, MongoDB, Redis, SQL Server | `Radius.Data/mySqlDatabases`, `Radius.Data/postgreSqlDatabases`, `Radius.Data/neo4jDatabases`, `Radius.Data/mongoDatabases`, `Radius.Data/redisCaches`, `Radius.Data/sqlServerDatabases` |
+| Kafka or RabbitMQ | `Radius.Messaging/kafka`, `Radius.Messaging/rabbitMQ` |
+| AI model endpoint or search | `Radius.AI/models`, `Radius.AI/search` |
+| Object or persistent storage | `Radius.Storage/objectStorage`, `Radius.Compute/persistentVolumes` |
+| Requested public ingress or application secrets | `Radius.Compute/routes`, `Radius.Security/secrets` |
+
+This table only identifies candidate types. For every emitted type, resolve
+four separate contracts:
+
+1. **Compile-time type.** `.radius/bicepconfig.json` selects the Bicep
+   extension. `bicep build` checks the model against that extension, but a clean
+   compile proves only that the local extension accepts the shape.
+2. **Registered schema.** When the target Radius control plane is available,
+   run `rad resource-type show '<type>' --output json` and read
+   `APIVersions.<version>.Schema`. This is the target's property shape,
+   required fields, sensitivity markers, read-only properties, and API
+   versions. `Radius.Core/applications` comes from Radius itself, not
+   `resource-types-contrib`, and the command resolves it the same way.
+3. **Registered Recipe.** Use the target Environment and resource group:
+
+   ```sh
+   rad recipe list --environment '<environment>' --group '<group>' --output json
+   rad recipe show '<recipe-name>' --resource-type '<type>' \
+     --environment '<environment>' --group '<group>' --output json
+   ```
+
+   These commands prove Recipe availability and show its template source and
+   parameters.
+4. **Recipe output mapping.** Read the Recipe Pack Bicep from the Environment
+   setup or deployment source that created the registration. For a generated
+   custom type, this is `.radius/custom-recipe-pack.bicep`. The `outputs` block
+   maps module outputs to resource properties and managed-secret keys. When a
+   wrapped Recipe omits that mapping, inspect the Recipe module's
+   `result.values` and `result.secrets`. `rad recipe show` does not expose this
+   mapping.
+
+For the current upstream Azure boundary used by `check.mjs`, resolve
+`radius-project/resource-types-contrib@main` to one commit and read both files
+at that commit. Derive the schema path from the type:
+`Radius.Data/mySqlDatabases` becomes
+`Data/mySqlDatabases/mySqlDatabases.yaml`. The Recipe Pack is
+`recipe-packs/azure/aks-recipepack.bicep`. Do not combine a schema from one
+revision with a Recipe Pack from another. If the exact target registration or
+Recipe Pack source is unavailable, report that gap rather than guessing.
+
+The target schema and Recipe are the deployment contract. They outrank mutable
+extension metadata such as `radius:latest`, a branch, or a stale local artifact.
+Every emitted type and property must resolve there. Read a Recipe-generated
+property only when that Recipe maps it. A property explicitly set in the model
+may be read back, but a provider-fixed literal needs proof from the concrete
+provider contract. Never set a read-only property. If the needed mapping,
+secret, omitted input, or Recipe is absent, report the gap instead of guessing,
+wrapping, deleting required wiring, or generating a partial application
+definition.
+
+For a source version the type does not offer, select the highest supported
+version that does not exceed it. When all supported versions are newer, use the
+lowest one only with proof that protocol, TLS, and authentication stay
+compatible. Otherwise generate a custom type or report the component as
+unsupported. State any version substitution in the response and flag the
+newer-server case as a compatibility risk. This choice must be deterministic.
+
+When no predefined type fits and Azure can provision the essential service,
+generate a `Radius.Resources/*` custom type as
+[custom-resource-types.md](custom-resource-types.md) specifies. That reference
+owns the custom schema, extension, Recipe, and Recipe-pack flow. If Azure cannot
+provision it, report the unsupported essential component.
+
+Match a compatible service by wire protocol rather than package name only when
+the client's protocol version, TLS, and authentication match the Recipe
+endpoint. Derive database, topic, queue, bucket, and other subresource values
+from source configuration. Never use a provider-reserved database admin name:
+Azure rejects `root`, `admin`, `administrator`, `guest`, `public`, and
+`azure_superuser`; PostgreSQL also rejects `postgres`, `azuresu`,
+`azure_pg_admin`, and names beginning `pg_`; SQL Server rejects `sa` and other
+fixed logins. `check.mjs` applies those rules only when the Recipe's normalized
+source exactly matches the corresponding Azure AVM database module. Use a
+provider-safe name such as `myadmin`, and pass the same resource property or
+literal to the application so the two values cannot drift.
+
+## File shape and naming
+
+Create or update `.radius/bicepconfig.json` before emitting the model. It must
+enable extensibility and resolve `radius`, plus the local custom-types extension
+when one is generated, including its locally generated tgz. Preserve unrelated
+settings in an existing file and change only entries that conflict with
+`app.bicep`. If a parent
+`bicepconfig.json` would apply before the local file exists, copy compatible
+settings into the new local file and adjust them there. The parent is input
+only. When there is no usable input, use:
+
+```json
+{
+  "experimentalFeaturesEnabled": {
+    "extensibility": true
+  },
+  "extensions": {
+    "radius": "br:biceptypes.azurecr.io/radius:latest"
+  }
+}
+```
+
+Use `radius:latest` only when no exact target contract is available. Otherwise
+use a verified compatible immutable reference, and fail closed when the target
+contract and extension disagree. An already-correct local configuration should
+not change.
+
+Always declare `extension radius`. Add a local custom-types extension only when
+the application uses a generated custom type. Declare resources in this order:
+extensions, `param environment string` and secure parameters for each
+developer-supplied secret, one application, backing
+resources, secret resources, container images, containers, then requested
+routes. The application resource is exactly one
+`Radius.Core/applications@2025-08-01-preview`.
+Do not declare per-namespace or per-type extensions.
+
+Use one `Radius.Compute/containers` resource per deployment unit. Put
+co-scheduled roles in its `containers` map and use separate resources for
+independently deployed roles. Declare backing resources before the workloads
+that consume them. A generated image is consumed through
+`<image>.properties.imageReference`, not a copied image value, and needs no
+connection of its own.
+
+Symbolic names are camelCase. Runtime-facing resource names and
+`properties.containers` keys are lowercase RFC 1123 labels: lowercase letters,
+digits, and hyphens, beginning and ending with an alphanumeric character. Keep
+a container key at most 63 characters and leave room for a prefixed resource
+name. Preserve a name, parameter, relationship, or native setting that an
+explicit runtime, deployment, or Recipe contract requires verbatim.
+
+The default symbols are `<shortName>App`, `<serviceName>Container`, and
+`<serviceName>Image`; backing-resource symbols use a camelCase engine and role.
+Use lowercase engine-and-role connection keys, such as `mysqldb`, and `web` for
+the main HTTP port key. Resource names use the app name and role, such as
+`<app-name>-<engine>` and `<app-name>-<role>`, so cloud-global names do not
+collide. Secrets follow the same application-scoped form. Use a source-derived
+subdirectory and a 40-character checkout SHA in a container-image
+`build.source`.
+
+Keep provider modules, SKUs, regions, firewall and network policy, and Recipe
+output mapping out of `app.bicep`. It contains application intent and runtime
+wiring. Generated Bicep has no explanatory comments or `@description`
+decorators. The one exception is the functional `#disable-next-line` described
+under [runtime configuration](#runtime-configuration-and-lifecycle).
+
+## Images and clean-checkout builds
+
+Prove each application image can build from a clean checkout through its exact
+Recipe. Account for build context, Dockerfile path, `.dockerignore`, build
+arguments, every local `COPY` and `ADD`, generated artifacts, target platforms,
+and required Git metadata. A copied source must exist in the clean context, and
+a generated artifact must come from an earlier Dockerfile stage rather than an
+unmodeled host build.
+
+Pin `build.source` to `?ref=<40-character-commit-sha>` and set `tag` to that
+same SHA. Use `//<subdirectory>` when the Dockerfile is below the repository
+root, set `build.dockerfile` for a nonstandard Dockerfile name, and set
+`build.args.BUILDKIT_CONTEXT_KEEP_GIT_DIR: '1'` when the build needs Git
+metadata. Do not use mutable build refs or tags. If a Dockerfile runs
+target-architecture binaries without a `BUILDPLATFORM` and `TARGETARCH`
+strategy, set the one proven `build.platforms` value rather than relying on
+multi-platform defaults or emulation. Set an explicit `build.platforms` value
+unless the Dockerfile proves its cross-build behavior.
+
+A Dockerfile that only packages an externally built artifact is not a source
+build. A publisher image may replace it only when source documentation maps the
+image to the selected revision and the image is digest-pinned. Otherwise report
+the packaging gap. Published images are appropriate for genuine third-party or
+backing containers and must be immutable. Do not make a required source build
+pass by quietly substituting an unproven release image.
+
+## Runtime configuration and lifecycle
+
+Keep the image entrypoint and CMD unless the selected profile requires an
+override: `command` replaces ENTRYPOINT and `args` replaces CMD, so setting one
+can discard the other. A `containerPort` exposes a port but does not make the
+process listen. Set the source-supported listener address and port, and make
+them agree.
+
+Use the exact configuration key, casing, syntax, and parser-safe value that the
+pinned source reads. In particular, omit a value rather than setting `'false'`
+when the parser treats every nonempty string as true. Supply every
+feature-enabling or backend-selection setting, bootstrap setting, subresource,
+protocol, TLS mode, authentication method, identity, endpoint transformation,
+and final client syntax that the selected trace needs.
+
+Match the lifecycle to the role. Run-to-completion work uses `OnFailure` or
+`Never` for `restartPolicy`, stateful work has writable ownership and persistent storage, and the
+selected profile has the migration, readiness, bootstrap, or identity path it
+needs before its primary operation is available.
+
+When an unmodified image needs a config file, put complete noncredential
+content in `Radius.Security/secrets.data`, mount it with `volumeMounts` and a
+`volumes` entry whose `secretName` uses that secret name, and point the process at the mount. The
+process uses `args` for that mounted config path. The
+only permitted generated-Bicep suppression is:
+
+```bicep
+#disable-next-line use-secure-value-for-secure-inputs
+'app.yaml': { value: '<complete noncredential config file content>' }
+```
+
+The compile must otherwise be warning-free. Put credentials in a secure
+parameter or `secretKeyRef`, and reference them from the file only when its
+format supports that safely. Generate a file at startup only when the image has
+the required shell and tools and the destination is writable.
+
+## Connections and secrets
+
+Declare a connection for every backing resource a workload consumes. A direct
+reference orders deployment but does not create the application graph
+relationship. The connection does not replace the application's native
+configuration.
+
+By default a connection injects nonsecret
+`CONNECTION_<NAME>_<PROPERTY>` values. `disableDefaultEnvVars` suppresses that
+only when the exact container schema supports it, and connection-driven cloud
+RBAC applies only to supported IAM relationship kinds. Sensitive values are not
+injected. Bind them with `valueFrom.secretKeyRef`, using the exact nested
+`<resource>.properties.secrets.name` and key declared by the Recipe. A resource
+with a secret usually needs both the connection and that explicit binding.
+Never hand-author a `CONNECTION_*` value for an unconnected resource.
+
+Pass a developer-supplied credential from the same `@secure()` parameter
+directly to the resource property and, when the workload consumes it, to
+`env.value`. Do not wrap it in an authored secret or send it through
+`secretKeyRef`. Author `Radius.Security/secrets` only for a genuine application
+secret, a noncredential config file, or a schema-required `secretName`.
+When the schema uses `username` and `password`, set them on the resource. When
+it uses `secretName`, create and reference the required secret. Supply neither
+when the schema takes no credentials.
+
+Never author a secret that copies a Recipe output. Do not read a managed-secret
+key as a convenience property, use a placeholder for it, or compose it into a
+larger template-time value, which would put the combined secret in deployment
+state. Bind a compatible published connection string or
+URL as the exact managed-secret key when the source accepts one. Otherwise bind
+parts separately and let the application compose them at runtime. URL-encode a
+credential when its runtime syntax requires it. Shell expansion does not encode
+it, `$(VAR)` can use only earlier environment entries, and expanding a secret
+into `command` or `args` exposes it in the process list.
+
+## Routes and provider boundary
+
+Do not declare a `Radius.Compute/routes` resource unless the request explicitly
+asks for public exposure. A container port is reachable inside the cluster and
+can be port-forwarded locally; a browser interface alone does not imply public
+ingress. Provider implementation choices stay outside the application model as
+described in [file shape and naming](#file-shape-and-naming).
+
+## Worked example
+
+This model shows how the rules fit together for a web workload that requires
+Redis. The repository URL, commit SHA, port, and `REDIS_URL` key must come from
+the source being modeled; they are concrete here only to make the relationships
+clear. This is an example of the shape, not a source of defaults.
 
 ```bicep
 extension radius
 
 param environment string
 
-@secure()
-param dbPassword string
-
 resource exampleApp 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'example-app'
-  properties: { environment: environment }
-}
-
-resource mysqlDb 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-  name: 'example-app-mysql'
   properties: {
     environment: environment
-    application: exampleApp.id
-    database: 'appdb'
-    username: 'myadmin'
-    password: dbPassword
   }
 }
 
-resource redisCache 'Radius.Data/redisCaches@2025-08-01-preview' = {
-  name: 'example-app-cache'
+resource cache 'Radius.Data/redisCaches@2025-08-01-preview' = {
+  name: 'example-app-redis'
   properties: {
     environment: environment
     application: exampleApp.id
+    size: 'S'
   }
 }
 
-resource exampleImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
-  name: 'example-app-image'
+resource webImage 'Radius.Compute/containerImages@2025-08-01-preview' = {
+  name: 'example-app-web-image'
   properties: {
     environment: environment
     application: exampleApp.id
-    tag: '5568077e0b1d1e2c3f4a5b6c7d8e9f0a1b2c3d4e'
+    tag: '0123456789abcdef0123456789abcdef01234567'
     build: {
-      source: 'git::https://github.com/org/repo.git?ref=5568077e0b1d1e2c3f4a5b6c7d8e9f0a1b2c3d4e'
+      source: 'git::https://github.com/example/example-app.git?ref=0123456789abcdef0123456789abcdef01234567'
+      platforms: [
+        'linux/amd64'
+      ]
     }
   }
 }
 
-resource exampleContainer 'Radius.Compute/containers@2025-08-01-preview' = {
-  name: 'example-app'
+resource webContainer 'Radius.Compute/containers@2025-08-01-preview' = {
+  name: 'example-app-web'
   properties: {
     environment: environment
     application: exampleApp.id
     containers: {
-      example: {
-        image: exampleImage.properties.imageReference
-        ports: { web: { containerPort: 3000 } }
+      web: {
+        image: webImage.properties.imageReference
+        ports: {
+          web: {
+            containerPort: 3000
+          }
+        }
         env: {
-          MYSQL_HOST: { value: mysqlDb.properties.host }
-          MYSQL_PASSWORD: { value: dbPassword }
-          CACHE_URL: {
+          REDIS_URL: {
             valueFrom: {
               secretKeyRef: {
-                secretName: redisCache.properties.secrets.name
+                secretName: cache.properties.secrets.name
                 key: 'url'
               }
             }
@@ -79,240 +405,31 @@ resource exampleContainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      mysqldb: { source: mysqlDb.id }
-      rediscache: { source: redisCache.id }
+      rediscache: {
+        source: cache.id
+        disableDefaultEnvVars: true
+      }
     }
   }
 }
 ```
 
-Symbolic names are camelCase; `name` values are kebab-case, and a `name` becomes
-a Kubernetes object name, so it must be lowercase letters, digits, and hyphens.
+The image comes from an immutable checkout and is consumed through
+`imageReference`. The workload uses the Recipe-managed `url` secret, while the
+connection records the application graph edge; default connection variables
+are disabled because this profile uses its native `REDIS_URL` setting. There is
+no route because the example does not request public exposure.
 
-This example shows shape only. Derive every resource name, source URL, tag,
-credential, port, and literal value from the repository being modeled.
+## Verification
 
-## Rules the compiler cannot check
+Follow [Compile and check](../SKILL.md#compile-and-check). Fix every checker
+finding and stop on a repeated signature. The generated model must compile
+without warnings, return `ALLOW`, and preserve every required backend
+activation, native value, secret binding, and dependency edge.
 
-1. **Read only what the Recipe returns or the template sets.** Reading back a
-   property this file itself sets on a resource (`mysqlDb.properties.database` when
-   you wrote `database: 'appdb'`) is fine — the value is right there. A property
-   the Recipe is expected to populate must appear in the output contract that
-   `check.mjs` derives from the current upstream Azure AKS Recipe Pack; one
-   declared in the type schema but absent from that contract resolves to null at
-   deploy time. PostgreSQL declares `port` and never sets it; use the provider's
-   fixed `5432` instead.
-
-2. **Bind managed secrets by reference.** When the derived Recipe contract lists
-   a `secrets` entry, reach it through
-   `valueFrom.secretKeyRef` with `secretName: <resource>.properties.secrets.name`
-   and that exact key. Never write a placeholder string such as
-   `'managedSecret:connectionString'`, and never read the key as a property.
-
-3. **Pass a developer-supplied credential straight through.** A `@secure()`
-   parameter goes to the resource property and to `env.value`. Radius encrypts
-   and injects it. Do not author a secret resource to wrap a value you already
-   hold as a parameter.
-
-4. **Never author a secret that restates a Recipe output.** `Radius.Security/secrets`
-   is for genuine application secrets and config files, or a schema-required
-   `secretName`. It is not an adapter for an output shape you wanted.
-
-5. **Do not interpolate a secret into a larger value.** Bicep composes at deploy
-   time, which writes the combined value into deployment state. Bind the parts
-   separately and let the application compose them, or bind a managed connection
-   string whose format the source already accepts. When the application composes
-   at runtime: a credential embedded in a URL must be URL-encoded and shell
-   expansion is not encoding, and Kubernetes `$(VAR)` expansion sees only
-   environment variables declared earlier in the map. `$(VAR)` also expands
-   before the process starts, so expanding a secret-valued variable into
-   `command` or `args` prints the secret in the pod's process list — prefer the
-   application's env-native settings, and reach for a `$(VAR)` flag only when no
-   env-native setting exists.
-
-6. **Pin the build to an immutable ref.** `build.source` must carry
-   `?ref=<40-char commit sha>`. Never `main`, `edge`, or `latest`. Set `tag` to
-   that same commit. When the Dockerfile is not at the repo root, the context is
-   `git::https://github.com/<org>/<repo>.git//<subdir>?ref=<sha>`, and
-   `build.dockerfile` names a Dockerfile not called `Dockerfile`. If the build
-   needs git metadata (BuildKit git contexts omit `.git`), set
-   `build.args.BUILDKIT_CONTEXT_KEEP_GIT_DIR: '1'`.
-
-7. **Model only what the selected startup path requires.** An installed package,
-   optional extra, test fixture, or example is not evidence of a dependency.
-   Every resource you declare must be consumed by a workload.
-
-8. **Never delete required wiring to make compilation pass.** If a needed
-   property, secret, or Recipe is missing, report the gap and stop.
-
-9. **Wire the whole dependency contract, not just the host.** A `host` output is
-   one field of a tuple the client needs: endpoint format, port, protocol
-   version, TLS mode, auth mechanism, username, and secret key. Read the type's
-   schema description for the provider's fixed values. Azure Event Hubs, for
-   example, serves Kafka at `<host>.servicebus.windows.net:9093` over `SASL_SSL`
-   with mechanism `PLAIN` and username `$ConnectionString`.
-
-10. **Declare a connection for every resource a workload consumes.** A
-    connection records the application-graph relationship this skill requires
-    for every consumed backing resource. A direct resource reference already
-    creates a deployment dependency edge and orders the resources; it is not a
-    substitute for that relationship, and nothing fails at deploy time to tell
-    you the connection is missing — the topology is just permanently wrong.
-    By default Radius injects `CONNECTION_<CONNECTION-NAME>_<PROPERTY-NAME>`
-    into the container for each non-sensitive property of the connected
-    resource; `disableDefaultEnvVars` on the connection entry suppresses that
-    injection. Connection-driven cloud RBAC applies only for supported IAM
-    relationship kinds, not every portable-resource connection. Sensitive
-    values are redacted on read and are **not** injected: bind those with
-    `secretKeyRef` against `<resource>.properties.secrets.name`. So a resource
-    with a secret needs both the connection and the explicit binding. Never
-    hand-write a `CONNECTION_*` variable for a resource you have not connected
-    — the application reads the whole set, and forging one member of it
-    supplies one and silently omits the rest.
-
-11. **`command` replaces the image ENTRYPOINT and `args` replaces its CMD.**
-    Setting one and not the other silently drops the rest of the original
-    command. Read the Dockerfile and keep the image's defaults unless the
-    selected profile requires an override.
-
-12. **`containerPort` publishes a port; it does not make the process listen.**
-    If the application binds a port or address from configuration, set that
-    configuration too, and make the two agree.
-
-13. **Write env values in the representation the source parses.** Most parsers
-    treat any non-empty string as true, so `'false'` enables the feature it was
-    meant to disable. Omit the variable instead.
-
-14. **Match lifecycle to the role.** Run-to-completion jobs need `restartPolicy`
-    of `'OnFailure'` or `'Never'`, and anything that keeps state needs writable
-    and persistent paths modeled.
-
-15. **Do not declare a route unless the request asked to publish the
-    application.** `containerPort` already makes the port reachable inside the
-    cluster, and `rad run` port-forwards it to the developer. A
-    `Radius.Compute/routes` resource publishes the workload outside the cluster,
-    which is a deployment decision the repository cannot tell you. Having a
-    browser interface is not the test — almost every one of these applications
-    has one. The absence of a route is the normal shape of a model.
-
-16. **Build application code from its Dockerfile; reserve published images for
-    third-party components.** Match a backing service by wire protocol rather
-    than package name, so MariaDB maps to MySQL and Valkey to Redis, but only
-    when the client's protocol version, TLS, and auth match the Recipe endpoint.
-
-17. **Starting is not working.** A container that boots into a login screen,
-    placeholder config, or empty pipeline is not modeled. The selected profile's
-    primary feature has to be reachable without manual setup. An image that
-    ships an authentication gate or first-run setup wizard needs that surface
-    configured from its documented settings — disable it when the profile does
-    not need it, or provision its credentials — so the first request lands in
-    the working application, not on a setup screen.
-
-18. **Model the service the application exists to operate on.** A UI for Kafka
-    needs a Kafka cluster; a SQL client needs a database; a pipeline needs its
-    broker. Turning on a mode that lets a human supply those coordinates later —
-    a dynamic-config flag, a setup wizard, an admin form, a mounted config file
-    someone still has to write — is the opposite of modeling the dependency. If
-    a type in the catalog fits, declare it and wire it. If none fits, generate a
-    custom type. Declaring none, and leaving the workload to be configured by
-    hand, is the one option that is always wrong.
-
-19. **Set explicit `build.platforms` unless the Dockerfile proves cross-builds.**
-    Do not assume the Recipe's multi-platform default or QEMU emulation. A
-    Dockerfile that runs target-architecture binaries in its build stages with
-    no `BUILDPLATFORM`/`TARGETARCH` strategy builds one platform; set that one
-    explicitly (for example `['linux/amd64']`).
-
-20. **Deliver an external config file by mounting an authored secret.** When an
-    unmodified image needs a config file, author it into
-    `Radius.Security/secrets` `data` and mount it, rather than assuming the
-    image has a shell to generate it at startup:
-
-    ```bicep
-    resource runtimeConfig 'Radius.Security/secrets@2025-08-01-preview' = {
-      name: 'runtime-config'
-      properties: {
-        environment: environment
-        application: exampleApp.id
-        data: {
-          #disable-next-line use-secure-value-for-secure-inputs
-          'app.yaml': { value: '<complete config file content>' }
-        }
-      }
-    }
-    ```
-
-    The container mounts it with `volumeMounts` (`volumeName`/`mountPath`), a
-    `volumes` entry with `secretName: runtimeConfig.name`, and `args` pointing
-    the process at the mounted path. The `#disable-next-line` directive is
-    allowed **only** when the value is
-    genuinely non-credential config content — the compile must otherwise be
-    warning-free, and a real credential in the file body belongs in env via a
-    `@secure()` parameter or `secretKeyRef`, referenced from the file when the
-    format supports it. Generate config at startup instead only when the image
-    verifiably contains the shell and tools and the destination is writable.
-
-21. **Generated Bicep carries no commentary.** No explanatory comments and no
-    `@description` decorators. The one exception is a functional
-    `#disable-next-line` directive per rule 20.
-
-22. **Choose an unsupported service version deterministically.** The type's
-    version enum is the Recipe's contract. When the source pins a version the
-    type does not offer, set the highest supported version that does not exceed
-    the source's. When every supported version is newer, use the lowest one only
-    when the repository proves that its protocol, TLS, and authentication remain
-    compatible (rule 16); otherwise the predefined type does not fit, so
-    generate a custom type (rule 18). Name either substitution in the summary,
-    flagging the newer-server case as a compatibility risk. Do not pick a
-    version by taste — two runs over the same repository must produce the same
-    model.
-
-23. **Never use a provider-reserved admin username.** A backing resource's
-    `username` becomes the cloud database's admin login, and providers reject
-    reserved names: Azure refuses `root`, `admin`, `administrator`, `guest`,
-    `public`, and `azure_superuser`; PostgreSQL additionally refuses
-    `postgres`, `azuresu`, `azure_pg_admin`, and any name starting with
-    `pg_`; SQL Server refuses `sa` and other fixed logins.
-    `check.mjs` applies these names and prefixes only when the Recipe's normalized
-    source exactly matches the corresponding Azure AVM database module. The
-    common cases are exactly what a source derives — MySQL's `root`,
-    PostgreSQL's default `postgres` — so substitute a neutral admin name such as
-    `myadmin`, and pass the resource property (or the same literal) to the
-    application's user variable so the two cannot drift.
-
-24. **Give backing resources application-scoped names.** The Radius resource
-    `name` becomes the cloud resource's name, and many of those are globally
-    scoped — Service Bus namespaces, Redis Enterprise clusters, and
-    flexible-server DNS labels. A bare service name (`redis`, `rabbitmq`,
-    `mysql`) collides with any other deployment that picked the same one and
-    fails with NameInUse. Prefix the application name (`<app>-redis`,
-    `<app>-mysql`), keeping the kebab-case rule.
-
-25. **Bind a published connection string; never compose one.** When the
-    application reads a full connection string or URL and
-    the derived Recipe contract lists one as a managed secret (`url`,
-    `connectionString`), bind that exact key with `secretKeyRef`. A string
-    composed from `host` and `port` omits the credential the provider
-    requires — Redis rejects it with NOAUTH — and invites reads of properties
-    the Recipe never sets (PostgreSQL `port`, rule 1). Composing one that
-    embeds a secret also violates rule 5.
-
-## Verify
-
-Run [Compile and check](../SKILL.md#compile-and-check) from SKILL.md. The
-verdict is binary: `ALLOW` or `DENY`, with a stable `signature`. Every finding
-is a provable defect — fix it and re-run; there is nothing to adjudicate. Every
-compiler diagnostic in the SARIF denies, warnings included, so the compile must
-be warning-free (the only sanctioned suppression is rule 20's
-`#disable-next-line` for a non-credential config file). If the `signature`
-repeats after a repair attempt, the fix is not converging — stop and report the
-finding.
-
-Decide every ambiguity yourself. When several runnable profiles exist, pick the
-one the source documents most completely, model it, and say which you chose and
-why. When a component has no Radius type, model the rest and report the gap.
-Never ask the user a modeling question; an unasked question answered from
-evidence is the job. The pull request is the only confirmation to ask for.
-
-Compiling proves the shape. Only these checks and the source evidence prove it
-runs.
+Close the private trace by checking that its input reaches the chosen workload,
+all required services, and the stated result with source-supported
+configuration. Compile success, checker acceptance, and a starting process are
+each incomplete on their own. Report a schema, Recipe, target Environment,
+source-build, or unsupported-component gap rather than a partial model with an
+unresolved runtime caveat.
