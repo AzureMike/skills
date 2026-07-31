@@ -98,7 +98,7 @@ credential, port, and literal value from the repository being modeled.
    property this file itself sets on a resource (`mysqlDb.properties.database` when
    you wrote `database: 'appdb'`) is fine — the value is right there. A property
    the Recipe is expected to populate must appear in the output contract that
-   `check.py` derives from the current upstream Azure AKS Recipe Pack; one
+   `check.mjs` derives from the current upstream Azure AKS Recipe Pack; one
    declared in the type schema but absent from that contract resolves to null at
    deploy time. PostgreSQL declares `port` and never sets it; use the provider's
    fixed `5432` instead.
@@ -273,7 +273,7 @@ credential, port, and literal value from the repository being modeled.
     `public`, and `azure_superuser`; PostgreSQL additionally refuses
     `postgres`, `azuresu`, `azure_pg_admin`, and any name starting with
     `pg_`; SQL Server refuses `sa` and other fixed logins.
-    `check.py` applies these names and prefixes only when the Recipe's normalized
+    `check.mjs` applies these names and prefixes only when the Recipe's normalized
     source exactly matches the corresponding Azure AVM database module. The
     common cases are exactly what a source derives — MySQL's `root`,
     PostgreSQL's default `postgres` — so substitute a neutral admin name such as

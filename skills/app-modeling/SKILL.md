@@ -61,10 +61,10 @@ output:
 out=$(mktemp -d)
 bicep build .radius/app.bicep --diagnostics-format sarif --stdout \
   > "$out/app.json" 2> "$out/app.sarif" || true
-python3 scripts/check.py "$out/app.json" --diagnostics "$out/app.sarif"
+node scripts/check.mjs "$out/app.json" --diagnostics "$out/app.sarif"
 ```
 
-Before checking the model, `check.py` downloads the current Azure AKS Recipe
+Before checking the model, `check.mjs` downloads the current Azure AKS Recipe
 Pack from `radius-project/resource-types-contrib@main`, compiles it with the
 repository's `.radius/bicepconfig.json`, and derives the Recipe output contract
 in memory. It doesn't write the pack or its contract into the repository.
@@ -80,7 +80,7 @@ reported as warnings. The SARIF stream is the compiler's real verdict, which is
 why `--diagnostics` is required — without it a run could pass a model the
 compiler already objected to. Every diagnostic in it is a failure, the compile
 must be warning-free, and captured output that is not SARIF at all is itself a
-failure. `check.py` returns `ALLOW` or `DENY` with a stable `signature` that
+failure. `check.mjs` returns `ALLOW` or `DENY` with a stable `signature` that
 covers the findings themselves, not their wording, so fixing any finding moves
 it; repair a `DENY` and rerun, and stop when the signature repeats — the fix is
 not converging. A `checker-unusable` finding means validation could not run,
@@ -197,7 +197,7 @@ The following is the allow-list of predefined types this skill emits when one fi
 
 Do NOT invent properties on these types, and do NOT substitute one predefined type for another. When a backing service the application genuinely needs has NO matching type above, do not stop and do not force an ill-fitting type: generate a custom resource type under the `Radius.Resources` namespace, following [custom-resource-types.md](references/custom-resource-types.md), which is authoritative for the schema, extension, recipe, and recipe-pack flow (Azure scope for now).
 
-For predefined Azure types, `check.py` derives the outputs that Recipes actually
+For predefined Azure types, `check.mjs` derives the outputs that Recipes actually
 set from the current upstream AKS Recipe Pack. This contract can be narrower
 than the type schema.
 
