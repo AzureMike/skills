@@ -10,7 +10,8 @@ description: >
   deploy because of a modeling or schema error. Do not use for: authoring
   generic or Azure Bicep unrelated to Radius, or deploying or running an
   already-modeled app. Resolves the configured Radius schemas and the
-  application's runtime contract to produce validated, deployable output.
+  application's runtime contract to produce source-grounded, statically
+  checked output.
 ---
 
 # Radius Application Modeling
@@ -40,7 +41,11 @@ After the prerequisite passes:
 3. Start the reply with a one-line introduction naming the application, then
    give a short summary of its modeled resources, profile choice, any
    `#disable-next-line` justification, compatibility risk, and unsupported
-   component. Do not include raw source analysis or the full generated files.
+   component. Call the result source-faithful and statically checked when that
+   is what the evidence proves. Do not call it deployable, working, complete,
+   or broadly validated unless the corresponding build, deployment, and
+   runtime behavior were actually executed. State each unexecuted boundary.
+   Do not include raw source analysis or the full generated files.
 4. Ask whether to open a pull request against the default branch. Never open it
    automatically. After confirmation, open a PR titled `Add Radius application
    definition` with body `Add the Radius application definition for
@@ -88,6 +93,13 @@ After the [Prerequisites](#prerequisites) check:
    buildability, or runtime behavior. A process starting is not proof that the
    profile works.
 
+Any essential packaging, profile, schema, Recipe, or runtime-contract gap found
+in steps 1–8 is terminal. Do not generate or commit a partial model and attach
+the gap as a caveat. The checker is a final structural test, not a source of
+profile design: don't inspect its implementation to decide what the model
+needs, and don't weaken a source requirement because the checker cannot test
+it.
+
 ## Compile and check
 
 Use a fresh temporary directory so concurrent runs cannot read each other's
@@ -109,11 +121,14 @@ including a warning, denies the model, and non-SARIF diagnostics output also
 fails validation. `check.mjs` checks the compiled model for such things as
 application shape, extensions, connections, secret bindings, Recipe outputs,
 build sources, and provably unsatisfiable runtime interpolation. It deliberately
-does not infer source semantics. Fix every `DENY` and rerun, but never edit away
-required wiring merely to obtain `ALLOW`. If its stable `signature` repeats
-after a repair, stop and report the finding. `checker-unusable` means the
-validation service could not run, not that the model is valid or invalid.
-Network, Recipe-pack compilation, and contract errors have that result.
+does not infer source semantics or judge whether a Recipe's supported-value
+substitution is compatible with the application. Fix every `DENY` and rerun,
+but never edit away required wiring merely to obtain `ALLOW`. After `ALLOW`,
+replay the source trace without using checker behavior as evidence. If its
+stable `signature` repeats after a repair, stop and report the finding.
+`checker-unusable` means the validation service could not run, not that the
+model is valid or invalid. Network, Recipe-pack compilation, and contract
+errors have that result.
 
 The checker downloads an immutable Azure AKS Recipe Pack source revision from
 `radius-project/resource-types-contrib` and compiles it with the repository's

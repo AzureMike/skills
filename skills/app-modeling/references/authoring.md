@@ -64,6 +64,11 @@ then tests whether Radius can provide it.
    type and Recipe support, state the choice in the summary, and do not ask a
    modeling question the evidence can answer.
 
+A gap in an essential role, dependency, target, bootstrap path, listener,
+persistence path, build path, schema, or Recipe is terminal. Do not emit a
+partial `app.bicep` and describe the missing piece as a limitation. Report the
+gap instead, even when a partial model would compile or pass `check.mjs`.
+
 When source supports both an external service and a compatible service
 represented by an exact predefined Radius type, prefer the Radius-backed
 profile. A developer-supplied external-service credential is not a shortcut
@@ -145,7 +150,10 @@ defaults, conditionals, and supported-version mappings. If the Recipe changes a
 requested version, protocol, authentication mode, or other compatibility
 property, use an exact supported value or report the substitution and its risk.
 Schema acceptance alone does not prove that the provider receives the authored
-value.
+value. A supported-value substitution is valid when the source's protocol,
+TLS, authentication, and feature requirements remain compatible. Record the
+effective version and any compatibility risk in the response; `check.mjs`
+doesn't make this source-dependent decision.
 
 The target schema and Recipe are the deployment contract. They outrank mutable
 extension metadata such as `radius:latest`, a branch, or a stale local artifact.
@@ -461,7 +469,10 @@ activation, native value, secret binding, and dependency edge.
 
 Close the private trace by checking that its input reaches the chosen workload,
 all required services, and the stated result with source-supported
-configuration. Compile success, checker acceptance, and a starting process are
-each incomplete on their own. Report a schema, Recipe, target Environment,
-source-build, or unsupported-component gap rather than a partial model with an
-unresolved runtime caveat.
+configuration, independently of what the checker tests. Compile success,
+checker acceptance, and a starting process are each incomplete on their own.
+Report a schema, Recipe, target Environment, source-build, or
+unsupported-component gap rather than a partial model with an unresolved
+runtime caveat. Describe only the checks that actually ran; don't call the
+result deployable, working, complete, or broadly validated when deployment,
+build, or runtime execution did not establish those claims.
