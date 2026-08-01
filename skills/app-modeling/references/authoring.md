@@ -35,11 +35,12 @@ then tests whether Radius can provide it.
    combine settings or services from different profiles or source revisions.
    The chosen profile must perform the application's primary operation without
    manual setup. Reject a health or metrics-only process, a login or setup
-   screen, placeholder configuration, empty pipeline, idle process, or any path
-   that still needs feature-critical configuration after deployment. Every
-   service used by the chosen profile is required, while an installed package,
-   optional extra, test, adapter, or unselected example does not add a
-   dependency.
+   screen as the terminal result, placeholder configuration, empty pipeline,
+   idle process, or any path that still needs feature-critical configuration
+   after deployment. Normal authentication before the primary operation is not
+   itself an incomplete profile. Every service used by the chosen profile is
+   required, while an installed package, optional extra, test, adapter, or
+   unselected example does not add a dependency.
 4. **Runtime trace.** Follow each startup command into the configuration reads
    and client initialization it uses. For every selected workload, extract the
    image and build context, command and arguments, listeners and ports,
@@ -62,6 +63,13 @@ then tests whether Radius can provide it.
    several complete profiles remain, choose the best documented one with exact
    type and Recipe support, state the choice in the summary, and do not ask a
    modeling question the evidence can answer.
+
+When source supports both an external service and a compatible service
+represented by an exact predefined Radius type, prefer the Radius-backed
+profile. A developer-supplied external-service credential is not a shortcut
+around an available type and Recipe. Keep the external profile only when the
+acceptance criteria select it or no compatible Radius-backed source profile
+exists.
 
 A complete profile must also meet the applicable behavior:
 
@@ -122,14 +130,22 @@ four separate contracts:
    `result.values` and `result.secrets`. `rad recipe show` does not expose this
    mapping.
 
-For the current upstream Azure boundary used by `check.mjs`, resolve
-`radius-project/resource-types-contrib@main` to one commit and read both files
-at that commit. Derive the schema path from the type:
+For the upstream Azure boundary used by `check.mjs`, use the immutable
+`radius-project/resource-types-contrib` revision declared by the checker and
+read both files at that commit. Derive the schema path from the type:
 `Radius.Data/mySqlDatabases` becomes
 `Data/mySqlDatabases/mySqlDatabases.yaml`. The Recipe Pack is
 `recipe-packs/azure/aks-recipepack.bicep`. Do not combine a schema from one
 revision with a Recipe Pack from another. If the exact target registration or
 Recipe Pack source is unavailable, report that gap rather than guessing.
+
+Read each Recipe parameter mapping as well as its outputs. Compare every
+authored resource property with the effective provider value after literal
+defaults, conditionals, and supported-version mappings. If the Recipe changes a
+requested version, protocol, authentication mode, or other compatibility
+property, use an exact supported value or report the substitution and its risk.
+Schema acceptance alone does not prove that the provider receives the authored
+value.
 
 The target schema and Recipe are the deployment contract. They outrank mutable
 extension metadata such as `radius:latest`, a branch, or a stale local artifact.
@@ -277,6 +293,13 @@ Match the lifecycle to the role. Run-to-completion work uses `OnFailure` or
 selected profile has the migration, readiness, bootstrap, or identity path it
 needs before its primary operation is available.
 
+Before emitting a networked workload, resolve the effective listener from the
+Dockerfile `ENV`, entrypoint, command, configuration, and application defaults.
+A `containerPort` does not repair a loopback-only listener. Before mounting a
+persistent volume, compare the image's effective `USER` with the ownership and
+write behavior of a fresh mount; report an ownership gap when neither the image
+nor the target container contract can initialize it.
+
 When an unmodified image needs a config file, put complete noncredential
 content in `Radius.Security/secrets.data`, mount it with `volumeMounts` and a
 `volumes` entry whose `secretName` uses that secret name, and point the process at the mount. The
@@ -323,10 +346,19 @@ key as a convenience property, use a placeholder for it, or compose it into a
 larger template-time value, which would put the combined secret in deployment
 state. Bind a compatible published connection string or
 URL as the exact managed-secret key when the source accepts one. Otherwise bind
-parts separately and let the application compose them at runtime. URL-encode a
-credential when its runtime syntax requires it. Shell expansion does not encode
-it, `$(VAR)` can use only earlier environment entries, and expanding a secret
-into `command` or `args` exposes it in the process list.
+parts separately and let the application compose them at runtime only when the
+application provides the required encoding.
+
+Kubernetes expands `$(VAR)` only from variables emitted earlier in the final
+container env list, but the Recipe Pack's container entry currently points to a
+mutable Recipe artifact, so its exact ordering isn't a stable contract. Don't
+compose authored plain env values from other plain or connection-derived env
+values. Binding a complete value with `secretKeyRef` avoids this ordering
+dependency. URL-encode credentials before placing them in URL userinfo;
+Kubernetes and shell substitution don't encode them. If the source accepts
+neither a complete managed URL nor separate
+fields and the image has no safe runtime encoder, report the composition gap.
+Expanding a secret into `command` or `args` exposes it in the process list.
 
 ## Routes and provider boundary
 

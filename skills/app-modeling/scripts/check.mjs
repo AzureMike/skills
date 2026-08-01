@@ -25,9 +25,12 @@ export const IMAGE_KIND = "Radius.Compute/containerImages";
 export const SECRET_KIND = "Radius.Security/secrets";
 export const RECIPE_PACK_KIND = "Radius.Core/recipePacks";
 
+export const RESOURCE_TYPES_CONTRIB_COMMIT =
+  "323e3fac5622fa3dad4f4c83b105b00f177496d9";
 export const AZURE_RECIPE_PACK_URL =
   "https://raw.githubusercontent.com/radius-project/" +
-  "resource-types-contrib/main/recipe-packs/azure/aks-recipepack.bicep";
+  `resource-types-contrib/${RESOURCE_TYPES_CONTRIB_COMMIT}/` +
+  "recipe-packs/azure/aks-recipepack.bicep";
 export const RECIPE_FETCH_TIMEOUT = 30_000;
 export const RECIPE_COMPILE_TIMEOUT = 120_000;
 export const MAX_RECIPE_PACK_BYTES = 2 * 1024 * 1024;
@@ -36,6 +39,15 @@ const WORKLOAD_KINDS = new Set([
   APP_KIND,
   CONTAINER_KIND,
   "Radius.Compute/routes",
+]);
+const CONNECTION_BACKING_PREFIXES = [
+  "Radius.Data/",
+  "Radius.Messaging/",
+  "Radius.AI/",
+  "Radius.Storage/",
+];
+const CONNECTION_BACKING_KINDS = new Set([
+  "Radius.Compute/persistentVolumes",
 ]);
 const SECURE_TYPES = new Set(["securestring", "secureobject"]);
 
@@ -228,9 +240,7 @@ export function commitSha(ref) {
 }
 
 export function immutable(ref) {
-  if (commitSha(ref)) return true;
-  const body = ref.startsWith("v") ? ref.slice(1) : ref;
-  return Boolean(body) && /^[0-9]+$/u.test(body.replaceAll(".", ""));
+  return commitSha(ref);
 }
 
 export function unwrapExpression(text) {
@@ -328,6 +338,7 @@ export function recipeContractFromPackArm(arm) {
   }
 
   const contracts = {};
+  const recipeTypes = new Map();
   const normalizedTypes = new Map();
   for (const pack of packs) {
     const recipes = propertiesOf(pack).recipes;
@@ -339,6 +350,15 @@ export function recipeContractFromPackArm(arm) {
       if (!isObject(recipe)) {
         throw new Error(`${kind} Recipe definition is not an object`);
       }
+      const normalizedKind = kind.toLowerCase();
+      const priorKind = recipeTypes.get(normalizedKind);
+      if (priorKind && priorKind !== kind) {
+        throw new Error(
+          `conflicting Recipe definitions for ${priorKind} and ${kind}: ` +
+            "type names differ only by case",
+        );
+      }
+      recipeTypes.set(normalizedKind, kind);
       const outputs = recipe.outputs;
       if (
         outputs === null ||
@@ -356,8 +376,7 @@ export function recipeContractFromPackArm(arm) {
       }
 
       const contract = constrainedContract(source, outputs);
-      const key = kind.toLowerCase();
-      const prior = normalizedTypes.get(key);
+      const prior = normalizedTypes.get(normalizedKind);
       if (prior) {
         const [priorKind, priorContract] = prior;
         if (!isDeepStrictEqual(priorContract, contract)) {
@@ -367,11 +386,14 @@ export function recipeContractFromPackArm(arm) {
         }
         continue;
       }
-      normalizedTypes.set(key, [kind, contract]);
+      normalizedTypes.set(normalizedKind, [kind, contract]);
       contracts[kind] = contract;
     }
   }
-  return { types: contracts };
+  return {
+    types: contracts,
+    recipeTypes: [...recipeTypes.values()].sort(),
+  };
 }
 
 function errorMessage(error) {
@@ -613,6 +635,11 @@ export class Model {
     recipes = mapping(recipes);
     this.compilerOutput = compilerOutput;
     this.contracts = mapping(recipes.types);
+    this.recipeTypes = new Set(
+      Array.isArray(recipes.recipeTypes)
+        ? recipes.recipeTypes.filter((kind) => typeof kind === "string")
+        : Object.keys(this.contracts),
+    );
     this.variables = mapping(arm.variables);
 
     const declared = Object.hasOwn(arm, "resources") ? arm.resources : {};
@@ -679,10 +706,17 @@ export class Model {
     return Object.keys(contract).length > 0 ? contract : null;
   }
 
-  recipeBacked(symbol) {
+  recipeAvailable(symbol) {
     const kind = this.kind(symbol);
+    return this.recipeTypes.has(kind) || Object.hasOwn(this.contracts, kind);
+  }
+
+  requiresConnection(symbol) {
+    const kind = this.kind(symbol);
+    if (!this.recipeAvailable(symbol)) return false;
     return (
-      Object.hasOwn(this.contracts, kind) ||
+      CONNECTION_BACKING_KINDS.has(kind) ||
+      CONNECTION_BACKING_PREFIXES.some((prefix) => kind.startsWith(prefix)) ||
       kind.startsWith("Radius.Resources/")
     );
   }
@@ -716,6 +750,17 @@ export function composes(text) {
 
 export function envOf(container) {
   return isObject(container.env) ? container.env : {};
+}
+
+export function runtimeReferences(text) {
+  if (typeof text !== "string") return [];
+  const references = [];
+  const pattern = /\$\(([A-Za-z_][A-Za-z0-9_]*)\)/gu;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > 0 && text[match.index - 1] === "$") continue;
+    references.push(match[1]);
+  }
+  return [...new Set(references)];
 }
 
 export function secretBinding(entry) {
@@ -1024,8 +1069,8 @@ export function checkBuildSource(model, report) {
         "mutable-build-source",
         `${symbol}.build.source`,
         `build ref ${ref || "(absent)"} is mutable, so the code that ` +
-          "gets built is not the code that was read; pin a commit sha " +
-          "or a release tag.",
+          "gets built is not the code that was read; pin a 40-character " +
+          "commit sha.",
       );
     }
   }
@@ -1038,11 +1083,12 @@ export function checkConnections(model, report) {
     for (const [resourcePath, text] of model.texts(symbol)) {
       if (resourcePath.startsWith(`${symbol}.connections`)) continue;
       for (const [target] of calls(text, "reference")) {
-        if (model.recipeBacked(target) && !consumed.has(target)) {
+        if (model.requiresConnection(target) && !consumed.has(target)) {
           consumed.set(target, resourcePath);
         }
       }
     }
+
     for (const [target, resourcePath] of [...consumed.entries()].sort(
       ([left], [right]) => left.localeCompare(right),
     )) {
@@ -1058,6 +1104,83 @@ export function checkConnections(model, report) {
           "connection-driven and may be suppressed with " +
           "disableDefaultEnvVars.",
       );
+    }
+  }
+}
+
+function connectionRuntimeVariables(model, properties, disabled) {
+  const variables = new Set();
+  const connections = connectionsOf(properties);
+  for (const [target, name] of Object.entries(connections)) {
+    const definition = mapping(mapping(properties.connections)[name]);
+    if ((definition.disableDefaultEnvVars === true) !== disabled) continue;
+    const prefix = `CONNECTION_${name.toUpperCase()}_`;
+    const contract = model.contract(target);
+    for (const property of Object.keys(mapping(contract?.outputs))) {
+      if (property !== "secrets") {
+        variables.add(`${prefix}${property.toUpperCase()}`);
+      }
+    }
+    for (const property of model.authored.get(target) ?? []) {
+      if (!["application", "environment", "recipe"].includes(property)) {
+        variables.add(`${prefix}${property.toUpperCase()}`);
+      }
+    }
+  }
+  return variables;
+}
+
+function connectionSecretVariables(model, properties) {
+  const variables = new Set();
+  for (const [target, name] of Object.entries(connectionsOf(properties))) {
+    const prefix = `CONNECTION_${name.toUpperCase()}_`;
+    const secrets = mapping(mapping(model.contract(target)?.outputs).secrets);
+    for (const key of Object.keys(secrets)) {
+      variables.add(`${prefix}${key.toUpperCase()}`);
+    }
+  }
+  return variables;
+}
+
+export function checkRuntimeInterpolation(model, report) {
+  for (const [symbol, properties] of model.ofKind(CONTAINER_KIND)) {
+    const disabledVariables = connectionRuntimeVariables(
+      model,
+      properties,
+      true,
+    );
+    const secretVariables = connectionSecretVariables(model, properties);
+    for (const [name, container] of Object.entries(containersOf(properties))) {
+      const env = envOf(container);
+      const authored = new Set(Object.keys(env));
+      const plain = Object.entries(env)
+        .filter(([, entry]) => isObject(entry) && typeof entry.value === "string")
+        .map(([key]) => key);
+
+      for (const key of plain) {
+        const value = env[key].value;
+        for (const referenced of runtimeReferences(value)) {
+          if (authored.has(referenced)) continue;
+          if (secretVariables.has(referenced)) {
+            report(
+              "unresolvable-runtime-interpolation",
+              `${symbol}.containers.${name}.env.${key}`,
+              `${key} references managed secret ${referenced}, but Radius ` +
+                "connections do not inject secret outputs as environment " +
+                "variables; bind the published key with secretKeyRef.",
+            );
+            continue;
+          }
+          if (disabledVariables.has(referenced)) {
+            report(
+              "unresolvable-runtime-interpolation",
+              `${symbol}.containers.${name}.env.${key}`,
+              `${key} references ${referenced}, but its connection disables ` +
+                "default environment-variable injection.",
+            );
+          }
+        }
+      }
     }
   }
 }
@@ -1212,6 +1335,7 @@ const RULES = [
   checkBuildSource,
   checkConnections,
   checkConnectionVariables,
+  checkRuntimeInterpolation,
   checkProcessArguments,
   checkSecretBindings,
   checkComposedSecrets,
@@ -1276,6 +1400,21 @@ export function contractFaults(recipes) {
     return ["`types` is missing, empty, or not an object"];
   }
   const faults = [];
+  const recipeTypes = recipes.recipeTypes;
+  if (
+    !Array.isArray(recipeTypes) ||
+    recipeTypes.length === 0 ||
+    !recipeTypes.every((kind) => typeof kind === "string" && kind)
+  ) {
+    faults.push(
+      "`recipeTypes` is missing, empty, or not a list of non-empty strings",
+    );
+  } else if (
+    new Set(recipeTypes.map((kind) => kind.toLowerCase())).size !==
+    recipeTypes.length
+  ) {
+    faults.push("`recipeTypes` contains duplicate case-insensitive type names");
+  }
   for (const [kind, contract] of sortedEntries(types)) {
     if (!isObject(contract)) {
       faults.push(`${kind} is not an object`);

@@ -63,20 +63,30 @@ After the [Prerequisites](#prerequisites) check:
    storage, lifecycle, bootstrap, protocols, authentication, and feature flags.
    Explore migrations, seed data, identities, and protocol surfaces when the
    trace depends on them. Optional repository-wide extras are not dependencies.
-4. Create or update `.radius/bicepconfig.json` first, then resolve every type,
+4. Before writing Bicep, stop unless the selected path has all of the following
+   source evidence: trigger or real input, processing path, target or upstream,
+   observable result, non-loopback listener when networked, protocol, TLS,
+   authentication, noninteractive bootstrap or identity, migrations, writable
+   and persistent paths, image user and volume ownership, and every
+   feature-enabling setting. Resolve the effective provider value after each
+   Recipe parameter transformation. A missing required fact is a modeling gap
+   to report, not a value to infer.
+5. Create or update `.radius/bicepconfig.json` first, then resolve every type,
    property, output, and managed secret against the exact target schema and
    Recipe. See [types and Recipes](references/authoring.md#type-and-recipe-resolution).
-5. Prove a clean-checkout image path for every application workload. Build the
+6. Prove a clean-checkout image path for every application workload. Build the
    application's code from its Dockerfile when possible, or report the
    packaging gap when the documented release-image exception does not apply.
-6. Generate the model with the [file and naming
+7. Generate the model with the [file and naming
    rules](references/authoring.md#file-shape-and-naming), [runtime
    rules](references/authoring.md#runtime-configuration-and-lifecycle), and
    [connection rules](references/authoring.md#connections-and-secrets). Do not
    remove needed wiring to make validation pass.
-7. Compile and check the whole model, fix every finding, and replay the private
-   trace against the selected configuration. A process starting is not proof
-   that the profile works.
+8. Compile and check the whole model, fix every finding, and then replay the
+   private source trace against the selected configuration. `ALLOW` proves only
+   the ARM-checkable contract; it does not prove profile completeness,
+   buildability, or runtime behavior. A process starting is not proof that the
+   profile works.
 
 ## Compile and check
 
@@ -87,24 +97,32 @@ output:
 out=$(mktemp -d)
 bicep build .radius/app.bicep --diagnostics-format sarif --stdout \
   > "$out/app.json" 2> "$out/app.sarif" || true
-node scripts/check.mjs "$out/app.json" --diagnostics "$out/app.sarif"
+node <loaded-skill-base>/scripts/check.mjs "$out/app.json" \
+  --diagnostics "$out/app.sarif"
 ```
+
+Replace `<loaded-skill-base>` with the base directory reported when this skill
+is loaded. Do not assume the repository working directory contains `scripts/`.
 
 Run the checker even when `bicep build` exits nonzero. Every SARIF diagnostic,
 including a warning, denies the model, and non-SARIF diagnostics output also
 fails validation. `check.mjs` checks the compiled model for such things as
 application shape, extensions, connections, secret bindings, Recipe outputs,
-and build sources. Fix every `DENY` and rerun. If its stable `signature`
-repeats after a repair, stop and report the finding. `checker-unusable` means
-the validation service could not run, not that the model is valid or invalid.
+build sources, and provably unsatisfiable runtime interpolation. It deliberately
+does not infer source semantics. Fix every `DENY` and rerun, but never edit away
+required wiring merely to obtain `ALLOW`. If its stable `signature` repeats
+after a repair, stop and report the finding. `checker-unusable` means the
+validation service could not run, not that the model is valid or invalid.
 Network, Recipe-pack compilation, and contract errors have that result.
 
-The checker downloads and compiles the current Azure AKS Recipe Pack from
-`radius-project/resource-types-contrib@main` with the repository's
+The checker downloads an immutable Azure AKS Recipe Pack source revision from
+`radius-project/resource-types-contrib` and compiles it with the repository's
 `.radius/bicepconfig.json`. It has no bundled fallback or local contract
 override, and it writes neither the pack nor its derived contract into the
-repository. Its live boundary is the current upstream Azure `main`, not an
-older, customized, AWS, or deployed Environment.
+repository. Some Recipe locations inside that source can still be mutable, so
+the checker uses only outputs and membership the compiled pack establishes; it
+doesn't infer implementation details such as container env ordering. Its
+boundary isn't a customized, AWS, or deployed Environment.
 
 ## Repairing an existing model
 
@@ -143,5 +161,7 @@ Before returning, confirm that:
   exception
 - names, resource order, connections, secrets, persistent state, and lifecycle
   follow [authoring.md](references/authoring.md)
-- the compile is warning-free, the checker returns `ALLOW`, and the trace
-  reaches its observable result
+- any claimed clean build or startup was actually executed; otherwise the
+  unexecuted boundary is stated
+- the compile is warning-free, the checker returns `ALLOW`, and an independent
+  source-trace replay still reaches the observable result
