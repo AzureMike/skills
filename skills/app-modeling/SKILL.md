@@ -55,20 +55,31 @@ After the prerequisite passes:
 
 After the [Prerequisites](#prerequisites) check:
 
-1. Select one complete, runnable profile. Follow
+1. Establish one deployment contract before choosing provider-sensitive
+   configuration. Use the supplied target Environment's registered schemas and
+   Recipes when available. Otherwise use the immutable fallback Azure boundary
+   in [type and Recipe resolution](references/authoring.md#type-and-recipe-resolution),
+   and state that choice in the response. Do not mix contracts from different
+   providers or Recipe Packs.
+2. Select one complete, runnable profile. Follow
    [profile selection](references/authoring.md#repository-exploration-and-profile-choice).
-2. Start with source-owned manifests, Dockerfiles, build and startup scripts,
+3. Start with source-owned manifests, Dockerfiles, build and startup scripts,
    then follow the configuration reads and client initialization they use.
    Inspect quickstarts and complete examples only when needed to choose or
    complete the profile. Keep a private evidence and trace note that follows the
    primary operation from input through workloads and dependencies to its
    observable result. Never put that note in Bicep.
-3. Inventory each executable role and required service in that path. Extract its
+4. Inventory each executable role and required service in that path. Extract its
    complete runtime contract: build, process, ports, configuration, secrets,
    storage, lifecycle, bootstrap, protocols, authentication, and feature flags.
-   Explore migrations, seed data, identities, and protocol surfaces when the
-   trace depends on them. Optional repository-wide extras are not dependencies.
-4. Before writing Bicep, stop unless the selected path has all of the following
+   Follow a request or protocol operation through middleware and client
+   initialization, including required secrets and options whose absent or false
+   defaults break that operation. Explore migrations, seed data, identities,
+   and protocol surfaces when the trace depends on them. Optional
+   repository-wide extras are not dependencies.
+5. Before writing Bicep, apply the matching behavior row in
+   [authoring.md](references/authoring.md#repository-exploration-and-profile-choice)
+   as a hard gate, then stop unless the selected path has all of the following
    source evidence: trigger or real input, processing path, target or upstream,
    observable result, non-loopback listener when networked, protocol, TLS,
    authentication, noninteractive bootstrap or identity, migrations, writable
@@ -76,25 +87,26 @@ After the [Prerequisites](#prerequisites) check:
    feature-enabling setting. Resolve the effective provider value after each
    Recipe parameter transformation. A missing required fact is a modeling gap
    to report, not a value to infer.
-5. Create or update `.radius/bicepconfig.json` first, then resolve every type,
+6. Create or update `.radius/bicepconfig.json` first, then resolve every type,
    property, output, and managed secret against the exact target schema and
    Recipe. See [types and Recipes](references/authoring.md#type-and-recipe-resolution).
-6. Prove a clean-checkout image path for every application workload. Build the
+7. Prove a clean-checkout image path for every application workload. Build the
    application's code from its Dockerfile when possible, or report the
    packaging gap when the documented release-image exception does not apply.
-7. Generate the model with the [file and naming
+8. Generate the model with the [file and naming
    rules](references/authoring.md#file-shape-and-naming), [runtime
    rules](references/authoring.md#runtime-configuration-and-lifecycle), and
    [connection rules](references/authoring.md#connections-and-secrets). Do not
    remove needed wiring to make validation pass.
-8. Compile and check the whole model, fix every finding, and then replay the
-   private source trace against the selected configuration. `ALLOW` proves only
+9. Compile and check the whole model, fix every finding, and then replay the
+   private source trace against the final generated model. `ALLOW` proves only
    the ARM-checkable contract; it does not prove profile completeness,
-   buildability, or runtime behavior. A process starting is not proof that the
-   profile works.
+   buildability, or runtime behavior. An executed probe is evidence only for
+   the exact final configuration and deployment boundary it ran; disclose any
+   difference. A process starting is not proof that the profile works.
 
 Any essential packaging, profile, schema, Recipe, or runtime-contract gap found
-in steps 1–8 is terminal. Do not generate or commit a partial model and attach
+in steps 1–9 is terminal. Do not generate or commit a partial model and attach
 the gap as a caveat. The checker is a final structural test, not a source of
 profile design: don't inspect its implementation to decide what the model
 needs, and don't weaken a source requirement because the checker cannot test
@@ -130,14 +142,16 @@ stable `signature` repeats after a repair, stop and report the finding.
 model is valid or invalid. Network, Recipe-pack compilation, and contract
 errors have that result.
 
-The checker downloads an immutable Azure AKS Recipe Pack source revision from
-`radius-project/resource-types-contrib` and compiles it with the repository's
-`.radius/bicepconfig.json`. It has no bundled fallback or local contract
-override, and it writes neither the pack nor its derived contract into the
-repository. Some Recipe locations inside that source can still be mutable, so
-the checker uses only outputs and membership the compiled pack establishes; it
-doesn't infer implementation details such as container env ordering. Its
-boundary isn't a customized, AWS, or deployed Environment.
+The checker downloads the fallback Azure AKS Recipe Pack at the immutable
+revision named in
+[authoring.md](references/authoring.md#type-and-recipe-resolution) and compiles
+it with the repository's `.radius/bicepconfig.json`. It has no bundled fallback
+or local contract override, and it writes neither the pack nor its derived
+contract into the repository. Some Recipe locations inside that source can
+still be mutable, so the checker uses only outputs and membership the compiled
+pack establishes; it doesn't infer implementation details such as container
+env ordering. This fallback isn't evidence about a customized, AWS, or deployed
+Environment.
 
 ## Repairing an existing model
 
@@ -176,7 +190,10 @@ Before returning, confirm that:
   exception
 - names, resource order, connections, secrets, persistent state, and lifecycle
   follow [authoring.md](references/authoring.md)
-- any claimed clean build or startup was actually executed; otherwise the
-  unexecuted boundary is stated
+- every essential gap discovered during modeling stopped generation rather than
+  becoming a caveat
+- any claimed build, startup, or runtime operation used the final generated
+  configuration and selected deployment boundary; otherwise the difference and
+  unexecuted boundary are stated
 - the compile is warning-free, the checker returns `ALLOW`, and an independent
   source-trace replay still reaches the observable result

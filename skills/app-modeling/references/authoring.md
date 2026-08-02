@@ -41,8 +41,16 @@ then tests whether Radius can provide it.
    itself an incomplete profile. Every service used by the chosen profile is
    required, while an installed package, optional extra, test, adapter, or
    unselected example does not add a dependency.
+   Before concluding that no complete profile exists, assess every candidate
+   already surfaced by the entry-point search and give its specific
+   disqualifier. Do not infer a repository-wide absence from a sample of
+   examples, and do not widen the search once the surfaced candidates are
+   resolved.
 4. **Runtime trace.** Follow each startup command into the configuration reads
-   and client initialization it uses. For every selected workload, extract the
+   and client initialization it uses. Follow one request or primary protocol
+   operation from its listener through middleware to the backing client, and
+   treat a secret, flag, or option with an absent or false default as required
+   when that path otherwise fails. For every selected workload, extract the
    image and build context, command and arguments, listeners and ports,
    environment and config parsing, secrets, writable and persistent paths,
    dependencies, protocol, TLS, authentication, bootstrap, backend choice, and
@@ -74,7 +82,8 @@ represented by an exact predefined Radius type, prefer the Radius-backed
 profile. A developer-supplied external-service credential is not a shortcut
 around an available type and Recipe. Keep the external profile only when the
 acceptance criteria select it or no compatible Radius-backed source profile
-exists.
+exists, and cite the exact source or Recipe incompatibility that prevents the
+Radius-backed profile.
 
 A complete profile must also meet the applicable behavior:
 
@@ -83,7 +92,7 @@ A complete profile must also meet the applicable behavior:
 | Proxy, gateway, or router | A configured, reachable upstream with the required authentication. A metadata store alone is insufficient. |
 | Management client or explorer | A configured target service, including backend choice, subresource, TLS, and authentication. An internal metadata store is not that target. |
 | Pipeline, worker, or event processor | A real input, the processing path, and a real output. Diagnostics or stdout alone do not qualify unless the source defines them as production behavior. |
-| File or content service | The primary protocol listens, noninteractive identity or bootstrap exists, and writable persistent storage is ready. |
+| File or content service | The primary protocol listens, a noninteractive protocol user or bootstrap exists, and writable persistent storage preserves both primary content and durable service identity material. |
 | Stateful web service or API | Its required stores, migration or bootstrap, credentials, and feature-enabling settings are configured. |
 
 Exact service choice, provider profile, deployment names, and secret names or
@@ -135,14 +144,20 @@ four separate contracts:
    `result.values` and `result.secrets`. `rad recipe show` does not expose this
    mapping.
 
-For the upstream Azure boundary used by `check.mjs`, use the immutable
-`radius-project/resource-types-contrib` revision declared by the checker and
-read both files at that commit. Derive the schema path from the type:
+Choose one deployment contract before using provider-sensitive values. When a
+target Environment is available, its registered schemas, Recipes, and Recipe
+Pack source are authoritative. Otherwise use the fallback Azure AKS Recipe Pack
+from `radius-project/resource-types-contrib` commit
+`323e3fac5622fa3dad4f4c83b105b00f177496d9`; this is also the boundary used by
+`check.mjs`. Derive the schema path from the type:
 `Radius.Data/mySqlDatabases` becomes
 `Data/mySqlDatabases/mySqlDatabases.yaml`. The Recipe Pack is
 `recipe-packs/azure/aks-recipepack.bicep`. Do not combine a schema from one
-revision with a Recipe Pack from another. If the exact target registration or
-Recipe Pack source is unavailable, report that gap rather than guessing.
+revision or provider with a Recipe Pack from another. Apply this same boundary
+to effective versions, endpoints, protocol, TLS, authentication, outputs, and
+runtime evidence. If the exact target registration or fallback source is
+unavailable, report that gap rather than guessing. The fallback commit is
+declared here so model design never requires reading checker implementation.
 
 Read each Recipe parameter mapping as well as its outputs. Compare every
 authored resource property with the effective provider value after literal
@@ -275,11 +290,16 @@ multi-platform defaults or emulation. Set an explicit `build.platforms` value
 unless the Dockerfile proves its cross-build behavior.
 
 A Dockerfile that only packages an externally built artifact is not a source
-build. A publisher image may replace it only when source documentation maps the
-image to the selected revision and the image is digest-pinned. Otherwise report
-the packaging gap. Published images are appropriate for genuine third-party or
-backing containers and must be immutable. Do not make a required source build
-pass by quietly substituting an unproven release image.
+build. A publisher image may replace it when a source-owned release workflow,
+release manifest, or documentation proves that a published tag was built from
+the selected revision. Resolve that tag through the publisher's registry and
+author the resulting `image@sha256:<digest>`; the digest need not already
+appear in source. If the registry cannot resolve the tag, report the packaging
+gap rather than guessing. Published images are appropriate for genuine
+third-party or backing containers and must be immutable. Digest provenance
+does not prove runtime or backing-service compatibility, which still needs the
+normal source trace. Do not make a required source build pass by quietly
+substituting an unproven release image.
 
 ## Runtime configuration and lifecycle
 
@@ -303,10 +323,13 @@ needs before its primary operation is available.
 
 Before emitting a networked workload, resolve the effective listener from the
 Dockerfile `ENV`, entrypoint, command, configuration, and application defaults.
-A `containerPort` does not repair a loopback-only listener. Before mounting a
-persistent volume, compare the image's effective `USER` with the ownership and
-write behavior of a fresh mount; report an ownership gap when neither the image
-nor the target container contract can initialize it.
+A `containerPort` does not repair a loopback-only listener. Trace a normal
+request through middleware and client construction, including required session,
+cookie, CSRF, transport, and authentication settings whose omitted defaults
+break that request. Before mounting a persistent volume, compare the image's
+effective `USER` with the ownership and write behavior of a fresh mount; report
+an ownership gap when neither the image nor the target container contract can
+initialize it.
 
 When an unmodified image needs a config file, put complete noncredential
 content in `Radius.Security/secrets.data`, mount it with `volumeMounts` and a
@@ -469,10 +492,13 @@ activation, native value, secret binding, and dependency edge.
 
 Close the private trace by checking that its input reaches the chosen workload,
 all required services, and the stated result with source-supported
-configuration, independently of what the checker tests. Compile success,
-checker acceptance, and a starting process are each incomplete on their own.
-Report a schema, Recipe, target Environment, source-build, or
-unsupported-component gap rather than a partial model with an unresolved
-runtime caveat. Describe only the checks that actually ran; don't call the
-result deployable, working, complete, or broadly validated when deployment,
+configuration in the final generated files, independently of what the checker
+tests. A runtime probe supports only the exact bytes and provider boundary it
+ran; a changed TLS mode, image, command, environment value, or backing Recipe
+must be disclosed and cannot validate the final model. Compile success, checker
+acceptance, and a starting process are each incomplete on their own. Report a
+schema, Recipe, target Environment, source-build, or unsupported-component gap
+rather than a partial model with an unresolved runtime caveat. Describe only
+the checks that actually ran; don't call the result deployable, working,
+complete, or broadly validated when an essential caveat remains or deployment,
 build, or runtime execution did not establish those claims.
