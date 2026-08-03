@@ -165,7 +165,11 @@ defaults, conditionals, and supported-version mappings. If the Recipe changes a
 requested version, protocol, authentication mode, or other compatibility
 property, use an exact supported value or report the substitution and its risk.
 Schema acceptance alone does not prove that the provider receives the authored
-value. A supported-value substitution is valid when the source's protocol,
+value. For a Recipe that directly invokes a provider module, an authored
+property absent from every Recipe parameter mapping is ignored, even when the
+resource schema accepts it; remove it only when the selected trace does not need
+the behavior, otherwise report a terminal Recipe gap. A supported-value
+substitution is valid when the source's protocol,
 TLS, authentication, and feature requirements remain compatible. Record the
 effective version and any compatibility risk in the response; `check.mjs`
 doesn't make this source-dependent decision.
@@ -259,10 +263,14 @@ The default symbols are `<shortName>App`, `<serviceName>Container`, and
 `<serviceName>Image`; backing-resource symbols use a camelCase engine and role.
 Use lowercase engine-and-role connection keys, such as `mysqldb`, and `web` for
 the main HTTP port key. Resource names use the app name and role, such as
-`<app-name>-<engine>` and `<app-name>-<role>`, so cloud-global names do not
-collide. Secrets follow the same application-scoped form. Use a source-derived
-subdirectory and a 40-character checkout SHA in a container-image
-`build.source`.
+`<app-name>-<engine>` and `<app-name>-<role>`. Application scoping alone does
+not make an Azure DNS name globally unique. When the selected Recipe passes the
+Radius name directly to a globally named provider resource, append a
+deterministic suffix derived from `environment` with `uniqueString`, while
+respecting that provider's length and character rules. Do not use randomness or
+probe-and-retry naming. Secrets follow the same application-scoped form. Use a
+source-derived subdirectory and a 40-character checkout SHA in a
+container-image `build.source`.
 
 Keep provider modules, SKUs, regions, firewall and network policy, and Recipe
 output mapping out of `app.bicep`. It contains application intent and runtime
@@ -275,9 +283,19 @@ under [runtime configuration](#runtime-configuration-and-lifecycle).
 Prove each application image can build from a clean checkout through its exact
 Recipe. Account for build context, Dockerfile path, `.dockerignore`, build
 arguments, every local `COPY` and `ADD`, generated artifacts, target platforms,
-and required Git metadata. A copied source must exist in the clean context, and
-a generated artifact must come from an earlier Dockerfile stage rather than an
-unmodeled host build.
+required Git metadata, and files generated outside the Docker build. Execute
+the clean-checkout build rather than treating Dockerfile inspection as proof.
+Inspect the resulting image's effective user, entrypoint, command, working
+directory, architecture, and declared volumes, and replay those values against
+every mount and process setting in the final model. A copied source must exist
+in the clean context, and a generated artifact must come from an earlier
+Dockerfile stage rather than an unmodeled host build. If the exact Recipe build
+cannot be executed, report a terminal packaging gap.
+
+For the immutable release-image exception, pull the exact digest and perform
+the same image inspection. Provenance and source tracing waive only the local
+build, not verification of the bytes and runtime configuration that will
+actually be deployed.
 
 Pin `build.source` to `?ref=<40-character-commit-sha>` and set `tag` to that
 same SHA. Use `//<subdirectory>` when the Dockerfile is below the repository
@@ -329,7 +347,16 @@ cookie, CSRF, transport, and authentication settings whose omitted defaults
 break that request. Before mounting a persistent volume, compare the image's
 effective `USER` with the ownership and write behavior of a fresh mount; report
 an ownership gap when neither the image nor the target container contract can
-initialize it.
+initialize it. A directory created or chowned in an image is not evidence for a
+fresh external volume mounted over that directory: the mount hides the image's
+ownership. Require an entrypoint that fixes ownership after mounting, a
+provider-supported pod ownership setting, or an immutable root init-container
+that initializes only the required paths; otherwise stop.
+
+Treat provider-required TLS as an application-client requirement. Prove that
+the exact client constructor or connection parser receives its TLS option,
+certificate mode, or TLS-enabled URL. A secure provider endpoint, port, or an
+environment variable the source never reads does not enable client TLS.
 
 When an unmodified image needs a config file, put complete noncredential
 content in `Radius.Security/secrets.data`, mount it with `volumeMounts` and a

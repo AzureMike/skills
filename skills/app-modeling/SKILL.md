@@ -90,9 +90,12 @@ After the [Prerequisites](#prerequisites) check:
 6. Create or update `.radius/bicepconfig.json` first, then resolve every type,
    property, output, and managed secret against the exact target schema and
    Recipe. See [types and Recipes](references/authoring.md#type-and-recipe-resolution).
-7. Prove a clean-checkout image path for every application workload. Build the
-   application's code from its Dockerfile when possible, or report the
-   packaging gap when the documented release-image exception does not apply.
+7. Prove an exact image path for every application workload. Execute each
+   clean-checkout Dockerfile build, or pull the exact digest for a documented
+   release-image exception. In both cases inspect the resulting image's
+   effective runtime configuration and reconcile it with the final command,
+   mounts, platform, listener, and user. If neither build nor pull and
+   inspection can run, report the packaging gap.
 8. Generate the model with the [file and naming
    rules](references/authoring.md#file-shape-and-naming), [runtime
    rules](references/authoring.md#runtime-configuration-and-lifecycle), and
@@ -134,8 +137,11 @@ fails validation. `check.mjs` checks the compiled model for such things as
 application shape, extensions, connections, secret bindings, Recipe outputs,
 build sources, and provably unsatisfiable runtime interpolation. It deliberately
 does not infer source semantics or judge whether a Recipe's supported-value
-substitution is compatible with the application. Fix every `DENY` and rerun,
-but never edit away required wiring merely to obtain `ALLOW`. After `ALLOW`,
+substitution is compatible with the application. It rejects statically invalid
+Kubernetes container names, but leaves source-dependent Recipe mappings,
+provider name availability, and mutable container-Recipe env ordering to the
+source review. Fix every `DENY` and rerun, but never edit away required wiring
+merely to obtain `ALLOW`. After `ALLOW`,
 replay the source trace without using checker behavior as evidence. If its
 stable `signature` repeats after a repair, stop and report the finding.
 `checker-unusable` means the validation service could not run, not that the

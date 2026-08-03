@@ -245,6 +245,42 @@ function findingCodes(findings) {
   return findings.map(({ code }) => code);
 }
 
+test("rejects static container names Kubernetes cannot create", () => {
+  const findings = check(
+    arm({
+      app: appResource(),
+      workload: containerResource({
+        containers: {
+          volumeOwner: {
+            image: "busybox@sha256:abc",
+            initContainer: true,
+          },
+        },
+      }),
+    }),
+    { types: {}, recipeTypes: [] },
+  );
+  assert.equal(findingCodes(findings).includes("invalid-container-name"), true);
+});
+
+test("allows lowercase RFC 1123 container names", () => {
+  const findings = check(
+    arm({
+      app: appResource(),
+      workload: containerResource({
+        containers: {
+          "volume-owner": {
+            image: "busybox@sha256:abc",
+            initContainer: true,
+          },
+        },
+      }),
+    }),
+    { types: {}, recipeTypes: [] },
+  );
+  assert.equal(findingCodes(findings).includes("invalid-container-name"), false);
+});
+
 test("source builds allow an independent tag and default platforms", () => {
   const imageKind = "Radius.Compute/containerImages@2025-08-01-preview";
   const findings = check(
@@ -385,6 +421,44 @@ test("does not infer connection env ordering from a mutable container Recipe", (
             env: {
               DATABASE_URL: {
                 value: "postgres://user@$(CONNECTION_DATABASE_HOST)/app",
+              },
+            },
+          },
+        },
+        connections: {
+          database: { source: "[reference('database').id]" },
+        },
+      }),
+    }),
+    {
+      types: {
+        [databaseKind]: {
+          source: "example.test/postgres:1",
+          outputs: { host: "hostname" },
+        },
+      },
+      recipeTypes: [databaseKind],
+    },
+  );
+  assert.equal(
+    findingCodes(findings).includes("unresolvable-runtime-interpolation"),
+    false,
+  );
+});
+
+test("allows direct resource-property wiring without runtime interpolation", () => {
+  const databaseKind = "Radius.Data/postgreSqlDatabases";
+  const findings = check(
+    arm({
+      app: appResource(),
+      database: resource(`${databaseKind}@2025-08-01-preview`, {}),
+      workload: containerResource({
+        containers: {
+          web: {
+            image: "example.test/app@sha256:abc",
+            env: {
+              DATABASE_HOST: {
+                value: "[reference('database').properties.host]",
               },
             },
           },

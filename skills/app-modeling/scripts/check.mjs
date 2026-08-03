@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Prefer false negatives: DENY only proven defects, never merely suspicious models.
 /**
  * Validate compiled Radius models against the skill contract.
  *
@@ -359,6 +360,10 @@ export function recipeContractFromPackArm(arm) {
         );
       }
       recipeTypes.set(normalizedKind, kind);
+      const source = recipe.source;
+      if (typeof source !== "string" || !source) {
+        throw new Error(`${kind}.source is not a non-empty string`);
+      }
       const outputs = recipe.outputs;
       if (
         outputs === null ||
@@ -370,11 +375,6 @@ export function recipeContractFromPackArm(arm) {
       if (!isObject(outputs)) {
         throw new Error(`${kind}.outputs is not an object`);
       }
-      const source = recipe.source;
-      if (typeof source !== "string" || !source) {
-        throw new Error(`${kind}.source is not a non-empty string`);
-      }
-
       const contract = constrainedContract(source, outputs);
       const prior = normalizedTypes.get(normalizedKind);
       if (prior) {
@@ -934,6 +934,26 @@ export function checkResourceShapes(model, report) {
   }
 }
 
+export function checkContainerNames(model, report) {
+  const kubernetesName = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/u;
+  for (const [symbol, properties] of model.ofKind(CONTAINER_KIND)) {
+    for (const name of Object.keys(containersOf(properties))) {
+      if (
+        name.startsWith("[") ||
+        (name.length <= 63 && kubernetesName.test(name))
+      ) {
+        continue;
+      }
+      report(
+        "invalid-container-name",
+        `${symbol}.containers.${name}`,
+        `${repr(name)} is not a valid Kubernetes container name; use a ` +
+          "lowercase RFC 1123 label of at most 63 characters.",
+      );
+    }
+  }
+}
+
 export function checkRecipeOutputs(model, report) {
   for (const symbol of Object.keys(model.resources).sort()) {
     for (const [resourcePath, text] of model.texts(symbol)) {
@@ -1158,7 +1178,7 @@ export function checkRuntimeInterpolation(model, report) {
         .map(([key]) => key);
 
       for (const key of plain) {
-        const value = env[key].value;
+        const value = expressionBody(env[key].value, model.variables);
         for (const referenced of runtimeReferences(value)) {
           if (authored.has(referenced)) continue;
           if (secretVariables.has(referenced)) {
@@ -1328,6 +1348,7 @@ const RULES = [
   checkCompilerDiagnostics,
   checkExtensionResolved,
   checkResourceShapes,
+  checkContainerNames,
   checkApplicationCount,
   checkRecipeOutputs,
   checkReservedValues,
