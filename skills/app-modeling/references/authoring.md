@@ -263,14 +263,16 @@ The default symbols are `<shortName>App`, `<serviceName>Container`, and
 `<serviceName>Image`; backing-resource symbols use a camelCase engine and role.
 Use lowercase engine-and-role connection keys, such as `mysqldb`, and `web` for
 the main HTTP port key. Resource names use the app name and role, such as
-`<app-name>-<engine>` and `<app-name>-<role>`. Application scoping alone does
-not make an Azure DNS name globally unique. When the selected Recipe passes the
-Radius name directly to a globally named provider resource, append a
-deterministic suffix derived from `environment` with `uniqueString`, while
-respecting that provider's length and character rules. Do not use randomness or
-probe-and-retry naming. Secrets follow the same application-scoped form. Use a
-source-derived subdirectory and a 40-character checkout SHA in a
-container-image `build.source`.
+`<app-name>-<engine>` and `<app-name>-<role>`. For every selected Recipe,
+inspect how its template uses `context.resource.name` and check the underlying
+provider's name scope, length, and character rules. If the Recipe passes the
+Radius name to a globally scoped provider name or DNS subdomain, append a
+deterministic suffix derived from `environment` with `uniqueString`, within the
+actual provider limits. Do not use randomness, deployment-time availability
+probes, or a changing seed because repeat deployment must produce the same
+name. Secrets follow the application-scoped form. Use a source-derived
+subdirectory and a 40-character checkout SHA in a container-image
+`build.source`.
 
 Keep provider modules, SKUs, regions, firewall and network policy, and Recipe
 output mapping out of `app.bicep`. It contains application intent and runtime
@@ -406,6 +408,12 @@ state. Bind a compatible published connection string or
 URL as the exact managed-secret key when the source accepts one. Otherwise bind
 parts separately and let the application compose them at runtime only when the
 application provides the required encoding.
+
+For every selected Recipe, determine from its template whether provider
+authentication is enabled and which published values form a working
+connection. Endpoint fields alone do not satisfy an authenticated provider;
+bind a compatible managed URL or connection string when the application accepts
+one, or bind every required part separately.
 
 Kubernetes expands `$(VAR)` only from variables emitted earlier in the final
 container env list, but the Recipe Pack's container entry currently points to a

@@ -98,6 +98,23 @@ const AZURE_RECIPE_CONSTRAINTS = {
   },
 };
 
+export const AZURE_GLOBAL_NAME_SOURCES = new Set([
+  "avm/res/cache/redis-enterprise",
+  "avm/res/cognitive-services/account",
+  "avm/res/db-for-my-sql/flexible-server",
+  "avm/res/db-for-postgre-sql/flexible-server",
+  "avm/res/document-db/database-account",
+  "avm/res/event-hub/namespace",
+  "avm/res/search/search-service",
+  "avm/res/service-bus/namespace",
+  "avm/res/sql/server",
+  "avm/res/storage/storage-account",
+]);
+
+const AZURE_CONNECTION_SECRET_REQUIREMENTS = {
+  "avm/res/cache/redis-enterprise": "url",
+};
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -1024,6 +1041,38 @@ export function checkReservedValues(model, report) {
   }
 }
 
+export function environmentUniqueAzureName(value, variables = {}) {
+  const expression = expressionBody(value, variables);
+  const pattern = new RegExp(
+    "^format\\('([a-z][a-z0-9]{0,10})\\{0\\}', " +
+      "uniqueString\\(parameters\\('environment'\\)\\)\\)$",
+    "u",
+  );
+  return pattern.test(expression);
+}
+
+export function checkCloudGlobalNames(model, report) {
+  for (const symbol of Object.keys(model.resources).sort()) {
+    const contract = model.contract(symbol);
+    if (
+      !contract ||
+      !AZURE_GLOBAL_NAME_SOURCES.has(recipeSourceKey(contract.source))
+    ) {
+      continue;
+    }
+    const outer = mapping(mapping(model.resources[symbol]).properties);
+    if (environmentUniqueAzureName(outer.name, model.variables)) continue;
+    report(
+      "nonunique-cloud-name",
+      `${symbol}.name`,
+      "the pinned Azure Recipe passes this name to a globally scoped " +
+        "resource; use a lowercase alphanumeric prefix of at most 11 " +
+        "characters followed by `${uniqueString(environment)}` so the " +
+        "result is deterministic and fits every supported provider limit.",
+    );
+  }
+}
+
 export function secureParameters(model, text) {
   return [...new Set(
     [...calls(text, "parameters")]
@@ -1311,6 +1360,43 @@ export function checkSecretBindings(model, report) {
   }
 }
 
+export function checkRequiredConnectionSecrets(model, report) {
+  for (const [symbol, properties] of model.ofKind(CONTAINER_KIND)) {
+    for (const [target, connectionName] of Object.entries(
+      connectionsOf(properties),
+    )) {
+      const contract = model.contract(target);
+      const required =
+        AZURE_CONNECTION_SECRET_REQUIREMENTS[
+          recipeSourceKey(contract?.source)
+        ];
+      if (!required) continue;
+      let found = false;
+      for (const container of Object.values(containersOf(properties))) {
+        for (const entry of Object.values(envOf(container))) {
+          const bound = secretBinding(entry);
+          if (!bound || bound[1] !== required) continue;
+          const expression = expressionBody(bound[0], model.variables);
+          if (
+            [...calls(expression, "reference")]
+              .some(([name]) => name === target)
+          ) {
+            found = true;
+          }
+        }
+      }
+      if (found) continue;
+      report(
+        "missing-required-secret-binding",
+        `${symbol}.connections.${connectionName}`,
+        `${target} uses an Azure Recipe that requires authentication; bind ` +
+          `its published ${repr(required)} secret with secretKeyRef instead ` +
+          "of wiring only its public host and port.",
+      );
+    }
+  }
+}
+
 export function checkComposedSecrets(model, report) {
   for (const [where, container] of model.containers()) {
     for (const [key, entry] of Object.entries(envOf(container))) {
@@ -1352,6 +1438,7 @@ const RULES = [
   checkApplicationCount,
   checkRecipeOutputs,
   checkReservedValues,
+  checkCloudGlobalNames,
   checkAuthoredSecrets,
   checkBuildSource,
   checkConnections,
@@ -1359,6 +1446,7 @@ const RULES = [
   checkRuntimeInterpolation,
   checkProcessArguments,
   checkSecretBindings,
+  checkRequiredConnectionSecrets,
   checkComposedSecrets,
   checkUnconsumedResources,
 ];

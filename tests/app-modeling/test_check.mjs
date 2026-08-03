@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   ALLOW,
+  AZURE_GLOBAL_NAME_SOURCES,
   AZURE_RECIPE_PACK_URL,
   DENY,
   RESOURCE_TYPES_CONTRIB_COMMIT,
@@ -13,6 +14,7 @@ import {
   compileRecipePack,
   constrainedContract,
   contractFaults,
+  environmentUniqueAzureName,
   fetchRecipePack,
   findBicepConfig,
   main,
@@ -24,6 +26,10 @@ import {
 
 function resource(type, properties = {}) {
   return { type, properties: { properties } };
+}
+
+function namedResource(type, name, properties = {}) {
+  return { type, properties: { name, properties } };
 }
 
 function recipePack(recipes) {
@@ -522,6 +528,94 @@ test("resolves reserved provider values through ARM variables", () => {
   assertHasCode(check(model, POSTGRES_CONTRACT), "reserved-property-value");
 });
 
+test("tracks every globally scoped service in the pinned Azure Recipe Pack", () => {
+  assert.deepEqual([...AZURE_GLOBAL_NAME_SOURCES].sort(), [
+    "avm/res/cache/redis-enterprise",
+    "avm/res/cognitive-services/account",
+    "avm/res/db-for-my-sql/flexible-server",
+    "avm/res/db-for-postgre-sql/flexible-server",
+    "avm/res/document-db/database-account",
+    "avm/res/event-hub/namespace",
+    "avm/res/search/search-service",
+    "avm/res/service-bus/namespace",
+    "avm/res/sql/server",
+    "avm/res/storage/storage-account",
+  ]);
+});
+
+for (const source of AZURE_GLOBAL_NAME_SOURCES) {
+  test(`requires environment uniqueness for ${source}`, () => {
+    const kind = "Radius.Example/resources";
+    const contract = {
+      types: { [kind]: { source, outputs: { host: "host" } } },
+      recipeTypes: [kind],
+    };
+    const model = arm({
+      app: appResource(),
+      backing: namedResource(
+        `${kind}@2025-08-01-preview`,
+        "common-name",
+      ),
+      workload: containerResource({
+        containers: { web: { image: "example.test/app@sha256:abc" } },
+        connections: {
+          backing: { source: "[reference('backing').id]" },
+        },
+      }),
+    });
+    assertHasCode(check(model, contract), "nonunique-cloud-name");
+
+    model.resources.backing.properties.name =
+      "[format('appdb{0}', uniqueString(parameters('environment')))]";
+    assertLacksCode(check(model, contract), "nonunique-cloud-name");
+  });
+}
+
+for (const { name, value, allowed } of [
+  {
+    name: "safe universal form",
+    value: "[format('appdb{0}', uniqueString(parameters('environment')))]",
+    allowed: true,
+  },
+  {
+    name: "safe form through variable",
+    value: "[variables('globalName')]",
+    allowed: true,
+  },
+  { name: "literal name", value: "appdb", allowed: false },
+  {
+    name: "prefix with a hyphen",
+    value: "[format('app-db{0}', uniqueString(parameters('environment')))]",
+    allowed: false,
+  },
+  {
+    name: "prefix longer than eleven characters",
+    value:
+      "[format('applicationdb{0}', uniqueString(parameters('environment')))]",
+    allowed: false,
+  },
+  {
+    name: "escaped format placeholder",
+    value: "[format('appdb{{0}}', uniqueString(parameters('environment')))]",
+    allowed: false,
+  },
+  {
+    name: "conditional uniqueness",
+    value:
+      "[if(false(), format('appdb{0}', " +
+      "uniqueString(parameters('environment'))), 'appdb')]",
+    allowed: false,
+  },
+]) {
+  test(`Azure global name form: ${name}`, () => {
+    const variables = {
+      globalName:
+        "[format('appdb{0}', uniqueString(parameters('environment')))]",
+    };
+    assert.equal(environmentUniqueAzureName(value, variables), allowed);
+  });
+}
+
 test("allows mapped, authored, and managed-secret Recipe properties", () => {
   const model = arm({
     app: appResource(),
@@ -904,6 +998,96 @@ test("rejects unpublished managed secret keys", () => {
     ),
     "unknown-secret-key",
   );
+});
+
+function redisContract() {
+  const kind = "Radius.Data/redisCaches";
+  return {
+    kind,
+    contract: {
+      types: {
+        [kind]: {
+          source:
+            "mcr.microsoft.com/bicep/avm/res/cache/redis-enterprise:0.5.1",
+          outputs: {
+            host: "hostName",
+            port: "port",
+            secrets: { url: "primaryConnectionString" },
+          },
+        },
+      },
+      recipeTypes: [kind],
+    },
+  };
+}
+
+test("rejects Azure Redis wiring that omits its authentication secret", () => {
+  const { kind, contract } = redisContract();
+  const findings = check(
+    arm({
+      app: appResource(),
+      cache: namedResource(
+        `${kind}@2025-08-01-preview`,
+        "[format('appredis{0}', uniqueString(parameters('environment')))]",
+      ),
+      workload: containerResource({
+        containers: {
+          web: {
+            image: "example.test/app@sha256:abc",
+            env: {
+              REDIS_HOST: {
+                value: "[reference('cache').properties.host]",
+              },
+              REDIS_PORT: {
+                value: "[reference('cache').properties.port]",
+              },
+            },
+          },
+        },
+        connections: {
+          cache: { source: "[reference('cache').id]" },
+        },
+      }),
+    }),
+    contract,
+  );
+  assertHasCode(findings, "missing-required-secret-binding");
+});
+
+test("accepts the complete Azure Redis URL from its managed secret", () => {
+  const { kind, contract } = redisContract();
+  const findings = check(
+    arm({
+      app: appResource(),
+      cache: namedResource(
+        `${kind}@2025-08-01-preview`,
+        "[format('appredis{0}', uniqueString(parameters('environment')))]",
+      ),
+      workload: containerResource({
+        containers: {
+          web: {
+            image: "example.test/app@sha256:abc",
+            env: {
+              REDIS_URL: {
+                valueFrom: {
+                  secretKeyRef: {
+                    secretName:
+                      "[reference('cache').properties.secrets.name]",
+                    key: "url",
+                  },
+                },
+              },
+            },
+          },
+        },
+        connections: {
+          cache: { source: "[reference('cache').id]" },
+        },
+      }),
+    }),
+    contract,
+  );
+  assertLacksCode(findings, "missing-required-secret-binding");
 });
 
 for (const { name, secretName, key, deniedCode } of [
