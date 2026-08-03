@@ -90,12 +90,13 @@ After the [Prerequisites](#prerequisites) check:
 6. Create or update `.radius/bicepconfig.json` first, then resolve every type,
    property, output, and managed secret against the exact target schema and
    Recipe. See [types and Recipes](references/authoring.md#type-and-recipe-resolution).
-7. Prove an exact image path for every application workload. Execute each
-   clean-checkout Dockerfile build, or pull the exact digest for a documented
-   release-image exception. In both cases inspect the resulting image's
-   effective runtime configuration and reconcile it with the final command,
-   mounts, platform, listener, and user. If neither build nor pull and
-   inspection can run, report the packaging gap.
+7. Prove a complete image build path for every application workload from the
+   Dockerfile and clean-checkout context. Reconcile its stages, copied files,
+   build arguments, platform behavior, user, entrypoint, command, working
+   directory, and declared volumes with the modeled workload. Do not use Docker
+   to build, pull, or run an image during modeling unless the user explicitly
+   requests build or runtime validation. Report a packaging gap when the source
+   evidence proves the build path is incomplete or unusable.
 8. Generate the model with the [file and naming
    rules](references/authoring.md#file-shape-and-naming), [runtime
    rules](references/authoring.md#runtime-configuration-and-lifecycle), and
@@ -192,8 +193,8 @@ Before returning, confirm that:
 - every workload and consumed backing service has its required runtime wiring
 - types, properties, Recipe outputs, secret keys, and extension resolve to the
   exact target contract
-- images build from a clean checkout or meet the documented immutable-image
-  exception
+- image build paths are complete from a clean checkout or meet the documented
+  immutable-image exception
 - names, resource order, connections, secrets, persistent state, and lifecycle
   follow [authoring.md](references/authoring.md)
 - every essential gap discovered during modeling stopped generation rather than

@@ -280,24 +280,28 @@ wiring. Generated Bicep has no explanatory comments or `@description`
 decorators. The one exception is the functional `#disable-next-line` described
 under [runtime configuration](#runtime-configuration-and-lifecycle).
 
-## Images and clean-checkout builds
+## Images and build paths
 
-Prove each application image can build from a clean checkout through its exact
-Recipe. Account for build context, Dockerfile path, `.dockerignore`, build
-arguments, every local `COPY` and `ADD`, generated artifacts, target platforms,
-required Git metadata, and files generated outside the Docker build. Execute
-the clean-checkout build rather than treating Dockerfile inspection as proof.
-Inspect the resulting image's effective user, entrypoint, command, working
-directory, architecture, and declared volumes, and replay those values against
-every mount and process setting in the final model. A copied source must exist
-in the clean context, and a generated artifact must come from an earlier
-Dockerfile stage rather than an unmodeled host build. If the exact Recipe build
-cannot be executed, report a terminal packaging gap.
+Prove each application image has a complete build path from a clean checkout
+through its exact Recipe. Inspect the build context, Dockerfile path,
+`.dockerignore`, build arguments, every local `COPY` and `ADD`, generated
+artifacts, target platforms, required Git metadata, and files generated outside
+the Docker build. Reconcile the Dockerfile's effective user, entrypoint,
+command, working directory, architecture, and declared volumes with every
+mount and process setting in the final model. A copied source must exist in the
+clean context, and a generated artifact must come from an earlier Dockerfile
+stage rather than an unmodeled host build. Report a terminal packaging gap only
+when the source evidence proves the build path is incomplete or unusable.
 
-For the immutable release-image exception, pull the exact digest and perform
-the same image inspection. Provenance and source tracing waive only the local
-build, not verification of the bytes and runtime configuration that will
-actually be deployed.
+Do not use Docker to build, pull, or run an image during modeling unless the
+user explicitly requests build or runtime validation. When such validation is
+requested, use the final modeled checkout and configuration, preserve the
+command's real exit status, and describe the exact boundary that ran.
+
+For the immutable release-image exception, resolve the exact digest from the
+publisher's registry without pulling the image. Provenance and source tracing
+waive only the source build; runtime compatibility still comes from the normal
+source trace unless the user explicitly requests a runtime probe.
 
 Pin `build.source` to `?ref=<40-character-commit-sha>` and set `tag` to that
 same SHA. Use `//<subdirectory>` when the Dockerfile is below the repository
