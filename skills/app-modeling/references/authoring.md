@@ -293,15 +293,14 @@ clean context, and a generated artifact must come from an earlier Dockerfile
 stage rather than an unmodeled host build. Report a terminal packaging gap only
 when the source evidence proves the build path is incomplete or unusable.
 
-Do not use Docker to build, pull, or run an image during modeling unless the
-user explicitly requests build or runtime validation. When such validation is
-requested, use the final modeled checkout and configuration, preserve the
-command's real exit status, and describe the exact boundary that ran.
+Never use Docker to build, pull, or run an image. Image execution is outside
+the modeling workflow; static source inspection establishes the build path,
+while Bicep compilation and `check.mjs` validate the generated model.
 
 For the immutable release-image exception, resolve the exact digest from the
 publisher's registry without pulling the image. Provenance and source tracing
 waive only the source build; runtime compatibility still comes from the normal
-source trace unless the user explicitly requests a runtime probe.
+source trace and is not established by modeling.
 
 Pin `build.source` to `?ref=<40-character-commit-sha>` and set `tag` to that
 same SHA. Use `//<subdirectory>` when the Dockerfile is below the repository

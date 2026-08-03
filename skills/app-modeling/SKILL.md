@@ -93,10 +93,10 @@ After the [Prerequisites](#prerequisites) check:
 7. Prove a complete image build path for every application workload from the
    Dockerfile and clean-checkout context. Reconcile its stages, copied files,
    build arguments, platform behavior, user, entrypoint, command, working
-   directory, and declared volumes with the modeled workload. Do not use Docker
-   to build, pull, or run an image during modeling unless the user explicitly
-   requests build or runtime validation. Report a packaging gap when the source
-   evidence proves the build path is incomplete or unusable.
+   directory, and declared volumes with the modeled workload. Never use Docker
+   to build, pull, or run an image; image execution is outside the modeling
+   workflow. Report a packaging gap when the source evidence proves the build
+   path is incomplete or unusable.
 8. Generate the model with the [file and naming
    rules](references/authoring.md#file-shape-and-naming), [runtime
    rules](references/authoring.md#runtime-configuration-and-lifecycle), and
