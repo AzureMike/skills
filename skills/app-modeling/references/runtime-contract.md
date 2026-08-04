@@ -25,6 +25,8 @@ Choose the runtime path before choosing resources:
 5. Stop when the requested profile is impossible for the pinned revision or exact Radius schema/recipe; do not emit a partial definition with a caveat.
 6. Include a backing service only when the selected startup/configuration path necessarily initializes or consumes it. A package import, optional extra, adapter, test fixture, example, or alternate profile elsewhere in the repository is not evidence that the service is required.
 
+Without an explicit profile, prefer production deployment assets, then a matching quickstart, then a complete example, and use defaults last. Before concluding that no complete profile exists, assess every candidate surfaced by that search and record its specific disqualifier; do not blend settings or services from different profiles.
+
 Create a requirement ledger before writing Bicep:
 
 | Criterion | Required evidence |
@@ -102,7 +104,8 @@ A resource output named `host` may be only one segment of the endpoint. A type n
 - Kubernetes `command` replaces the image `ENTRYPOINT`; `args` replaces `CMD`. Preserve the image defaults unless an inspected runtime contract requires an override.
 - Before using shell-based runtime composition, confirm the image contains that shell and every invoked binary.
 - A shell expansion is not URL encoding. Prove the runtime encoder or use source-native decomposed inputs that handle arbitrary valid credentials.
-- Ensure config/data paths are writable for the image user. Add persistent storage only when state must survive restarts.
+- Ensure config/data paths are writable for the image user. A fresh volume mounted over an image directory hides that directory's image-time ownership, so require a source-supported startup, pod ownership setting, or narrowly scoped init role that prepares the mounted path. Add persistent storage only when state must survive restarts.
+- A secure provider endpoint does not enable client TLS. Prove that the source-supported client constructor, connection string, or configuration receives the required TLS mode.
 - Keep migrations and verification probes distinct from the long-running application. Use an init role only when the application genuinely requires it.
 - When a selected profile requires multiple roles, model every role and its complete command/configuration. Do not collapse producer and consumer behavior into an idle process.
 - If required configuration is not packaged in the image, generate or mount it only through a schema-supported mechanism. Validate the complete file syntax, expansion rules, destination ownership, and command that consumes it.
@@ -115,6 +118,7 @@ A resource output named `host` may be only one segment of the endpoint. A type n
 Process startup is insufficient for configurable proxies, gateways, file servers, and processing engines. The emitted workload must activate the selected feature path:
 
 - a model-backed proxy has a usable model alias/provider route and endpoint/key/version wiring;
+- a proxy, gateway, or router has a configured reachable upstream and its required authentication;
 - a stream or queue pipeline has complete input and output roles/configuration;
 - a storage-backed service configures the selected remote filesystem rather than leaving credential variables unused; a file server also has a bootstrapped account, folder, or equivalent runnable path that selects that filesystem;
 - a database UI/client has a complete preconfigured native connection and usable noninteractive authentication/bootstrap path; and
@@ -125,6 +129,8 @@ Do not count an empty default config, placeholder pipeline, admin UI or login-sc
 ## Provider compatibility and ownership
 
 Inspect the concrete type, registered recipe, and client source together. Derive FQDN suffixes, TLS, ports, auth modes, connection-string formats, protocol compatibility, network/firewall requirements, and sensitive outputs from that contract. A type named Kafka or RabbitMQ may be backed by a managed service with a compatible surface; the client must support the actual protocol and authentication mode.
+
+Read Recipe parameter mappings as well as outputs, and validate the effective provider value after defaults, conditionals, and supported-value substitutions. Schema acceptance does not prove that the provider receives an authored value; when required behavior is unmapped or transformed incompatibly, report the Recipe gap.
 
 `app.bicep` owns developer intent and runtime wiring. Environment/provider Bicep owns recipe modules, SKUs, region, quota, firewall/network policy, and provider-output mapping. Add provider-specific values to the app model only when the application must consume them at runtime.
 

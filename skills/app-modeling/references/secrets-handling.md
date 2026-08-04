@@ -114,11 +114,13 @@ env: {
 }
 ```
 
-Kubernetes expands `$(VAR_NAME)` only from variables declared earlier in the environment list. Confirm the exact container recipe preserves this order, and preserve escaping through Bicep and any shell/config layer. Confirm the image has every shell or utility used by an entrypoint wrapper.
+Kubernetes expands `$(VAR_NAME)` only from variables declared earlier in the environment list. Rely on that order only when the exact immutable container Recipe proves it; a mutable Recipe source is not stable ordering evidence. Preserve escaping through Bicep and any shell/config layer, and confirm the image has every shell or utility used by an entrypoint wrapper.
 
 Credentials embedded in URLs must be URL-encoded. Kubernetes variable expansion does not encode them; use application logic or a verified runtime helper. If safe encoding cannot be guaranteed, do not generate a fragile connection string.
 
 Do not assume an unconstrained developer-supplied password is URL-safe, recommend a restricted character set as a workaround, or treat shell expansion as encoding. Prefer source-native decomposed host, port, database, username, password, and TLS flags or fields when the application safely assembles the final client value.
+
+Never expand a secret into `command` or `args`, where it becomes visible in the process list. If the application accepts neither separate fields nor a compatible managed value and the image has no safe runtime encoder, report the composition gap.
 
 ### Authored secrets are not composition engines
 
